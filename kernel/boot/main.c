@@ -6,6 +6,7 @@
 #include "../drivers/pit.h"
 #include "../drivers/serial.h"
 #include "../lib/printk.h"
+#include "../mm/layout.h"
 #include "../mm/memory_map.h"
 #include "../mm/pmm.h"
 #include "../mm/vmm.h"
@@ -30,6 +31,7 @@ static volatile uint64_t limine_requests_end_marker[] =
 #define FAULT_TEST_NONE 0
 #define FAULT_TEST_INVALID_OPCODE 1
 #define FAULT_TEST_PAGE_FAULT 2
+#define FAULT_TEST_OBJECT_SPACE 3
 
 #define FAULT_TEST_MODE FAULT_TEST_NONE
 
@@ -46,6 +48,15 @@ static void run_fault_test(void) {
         :
         : "rax", "memory"
     );
+#elif FAULT_TEST_MODE == FAULT_TEST_OBJECT_SPACE
+    kputs("triggering object-space fault test\n");
+    {
+        volatile uint64_t *object_space_pointer;
+
+        object_space_pointer = (volatile uint64_t *)(uintptr_t)
+            (MEMORY_LAYOUT_OBJECT_SPACE_BASE + 0x1000);
+        (void)*object_space_pointer;
+    }
 #endif
 }
 
@@ -71,6 +82,7 @@ void kmain(void) {
     memory_map_print();
     pmm_init();
     vmm_init();
+    memory_layout_print();
 
     if (!vmm_is_ready()) {
         kputs("ERROR: VMM initialization failed\n");

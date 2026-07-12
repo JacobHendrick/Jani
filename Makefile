@@ -22,12 +22,13 @@ PIC_OBJ := $(BUILD_DIR)/pic.o
 PIT_OBJ := $(BUILD_DIR)/pit.o
 KEYBOARD_OBJ := $(BUILD_DIR)/keyboard.o
 MEMORY_MAP_OBJ := $(BUILD_DIR)/memory_map.o
+LAYOUT_OBJ := $(BUILD_DIR)/layout.o
 PMM_OBJ := $(BUILD_DIR)/pmm.o
 VMM_OBJ := $(BUILD_DIR)/vmm.o
 SERIAL_OBJ := $(BUILD_DIR)/serial.o
 PRINTK_OBJ := $(BUILD_DIR)/printk.o
 STRING_OBJ := $(BUILD_DIR)/string.o
-KERNEL_OBJECTS := $(MAIN_OBJ) $(GDT_OBJ) $(IDT_OBJ) $(ISR_OBJ) $(INTERRUPTS_OBJ) $(PIC_OBJ) $(PIT_OBJ) $(KEYBOARD_OBJ) $(MEMORY_MAP_OBJ) $(PMM_OBJ) $(VMM_OBJ) $(SERIAL_OBJ) $(PRINTK_OBJ) $(STRING_OBJ)
+KERNEL_OBJECTS := $(MAIN_OBJ) $(GDT_OBJ) $(IDT_OBJ) $(ISR_OBJ) $(INTERRUPTS_OBJ) $(PIC_OBJ) $(PIT_OBJ) $(KEYBOARD_OBJ) $(MEMORY_MAP_OBJ) $(LAYOUT_OBJ) $(PMM_OBJ) $(VMM_OBJ) $(SERIAL_OBJ) $(PRINTK_OBJ) $(STRING_OBJ)
 
 KERNEL_SOURCE := kernel/boot/main.c
 GDT_SOURCE := kernel/arch/gdt.c
@@ -38,6 +39,7 @@ PIC_SOURCE := kernel/drivers/pic.c
 PIT_SOURCE := kernel/drivers/pit.c
 KEYBOARD_SOURCE := kernel/drivers/keyboard.c
 MEMORY_MAP_SOURCE := kernel/mm/memory_map.c
+LAYOUT_SOURCE := kernel/mm/layout.c
 PMM_SOURCE := kernel/mm/pmm.c
 VMM_SOURCE := kernel/mm/vmm.c
 SERIAL_SOURCE := kernel/drivers/serial.c
@@ -109,6 +111,10 @@ $(KEYBOARD_OBJ): $(KEYBOARD_SOURCE) Makefile
 $(MEMORY_MAP_OBJ): $(MEMORY_MAP_SOURCE) Makefile
 	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
 	$(ZIG_ENV) $(CC) $(CFLAGS) -c $(MEMORY_MAP_SOURCE) -o $(MEMORY_MAP_OBJ)
+
+$(LAYOUT_OBJ): $(LAYOUT_SOURCE) Makefile
+	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(CC) $(CFLAGS) -c $(LAYOUT_SOURCE) -o $(LAYOUT_OBJ)
 
 $(PMM_OBJ): $(PMM_SOURCE) Makefile
 	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)

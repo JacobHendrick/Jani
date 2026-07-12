@@ -4,7 +4,13 @@
 #include "../drivers/pic.h"
 #include "../drivers/pit.h"
 #include "../lib/printk.h"
+#include "../mm/layout.h"
 #include "interrupts.h"
+
+#define PAGE_FAULT_PROTECTION (1ULL << 0)
+#define PAGE_FAULT_WRITE (1ULL << 1)
+#define PAGE_FAULT_USER (1ULL << 2)
+#define PAGE_FAULT_INSTRUCTION_FETCH (1ULL << 4)
 
 #define TIMER_PRINT_INTERVAL 100
 
@@ -73,7 +79,28 @@ void interrupt_handler(struct interrupt_frame *frame) {
     printk("rip: %p\n", (void *)frame->rip);
 
     if (frame->vector == 14) {
-        printk("cr2: %p\n", (void *)read_cr2());
+        uint64_t fault_address;
+        uint64_t error_code;
+        const char *access_kind;
+
+        fault_address = read_cr2();
+        error_code = frame->error_code;
+
+        if ((error_code & PAGE_FAULT_INSTRUCTION_FETCH) != 0) {
+            access_kind = "instruction fetch from";
+        } else if ((error_code & PAGE_FAULT_WRITE) != 0) {
+            access_kind = "write to";
+        } else {
+            access_kind = "read from";
+        }
+
+        printk("cr2: %p\n", (void *)fault_address);
+        printk("region: %s\n", memory_layout_region_name(fault_address));
+        printk("cause: %s a %s page, %s mode\n",
+               access_kind,
+               ((error_code & PAGE_FAULT_PROTECTION) != 0)
+                   ? "protected" : "not-present",
+               ((error_code & PAGE_FAULT_USER) != 0) ? "user" : "kernel");
     }
 
     halt_forever();

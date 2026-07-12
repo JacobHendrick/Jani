@@ -2,6 +2,7 @@
 
 #include "../lib/printk.h"
 #include "../lib/string.h"
+#include "layout.h"
 #include "pmm.h"
 #include "vmm.h"
 
@@ -18,7 +19,9 @@
 #define PAGE_OFFSET_MASK 0xFFFULL
 #define PAGE_ENTRY_HUGE (1ULL << 7)
 
-#define VMM_TEST_VIRTUAL_ADDRESS 0xFFFF900000000000ULL
+/* The self-test exercises the first page of object space: map, write,
+ * translate, unmap - the exact life cycle Phase 2 gives object versions. */
+#define VMM_TEST_VIRTUAL_ADDRESS MEMORY_LAYOUT_OBJECT_SPACE_BASE
 #define VMM_TEST_VALUE 0x4A414E49ULL
 
 struct page_table {
@@ -98,6 +101,10 @@ void vmm_init(void) {
     root_page_table = (struct page_table *)(uintptr_t)
         (hhdm_offset + root_page_table_physical);
     vmm_ready = 1;
+
+    /* The PMM only manages the first 4 GiB for now, so that is the span
+     * of physical memory the kernel actually reaches through the HHDM. */
+    memory_layout_register_hhdm(hhdm_offset, PMM_MAX_PHYSICAL_MEMORY);
 
     printk("vmm hhdm offset: %p\n", (void *)(uintptr_t)hhdm_offset);
     printk("vmm root table: %p\n",
