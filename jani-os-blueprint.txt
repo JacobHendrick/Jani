@@ -1,7 +1,7 @@
 ================================================================================
-                         AEON OS - COMPLETE BLUEPRINT
+                         JANI OS - COMPLETE BLUEPRINT
           A next-generation persistent, distributed, semantic OS
-                 (working codename "aeon" - rename freely)
+                  (working codename "Jani OS" - Janus, god of doors)
 ================================================================================
 
 This document is the full map for building the OS. It contains NO code by
@@ -212,55 +212,46 @@ PART 3 - LANGUAGE STACK AND TOOLCHAIN
 LANGUAGES
   - C (C11) for the kernel. Expect 25,000-50,000 hand-written lines total
     across all phases. The kernel is and stays MAJORITY C.
-  - Zig, in a supporting role: used specifically to cover C's weak spots
-    (undefined behavior, unsafe parsing of untrusted bytes) without
-    rewriting anything. See THE ZIG HARDENING STRATEGY below - Zig enters
-    as (1) the build toolchain for the C code, (2) the language for small
-    trust-boundary modules the C kernel calls through the C ABI, and
-    (3) an option for WASM system components. Zig interops with C better
-    than any other language: it compiles C directly, imports C headers
-    natively, and exports plain C-ABI functions.
+  - Zig is the project's primary language above the C kernel. See THE ZIG
+    EXPANSION STRATEGY below - Zig enters as (1) the build toolchain for C,
+    (2) the language for native trust-boundary modules called through the
+    C ABI, (3) the default language for WASM system components, and (4) the
+    official language for desktop/UI components and applications. Zig
+    interops with C directly, targets freestanding WebAssembly, and lets
+    one pinned toolchain cover the kernel boundary, services, UI, and apps.
   - x86_64 assembly, roughly 200-400 lines TOTAL: the entry stub, interrupt
     entry/exit trampolines, context switch, and a few privileged-register
     helpers. Assembly is only needed where no C ABI exists yet (before a
     stack exists) or where the compiler cannot express the operation
     (swapping stacks, iretq). Even Linux is under 1% assembly.
-  - Odin, for the GUI's visual components (Phase 8): compositor logic,
-    widget-tree renderer, layout, animation - compiled to the
-    freestanding_wasm32 target like any other component. Chosen for the
-    visual layer because Odin was designed for graphics tooling: vector/
-    matrix math and swizzling are built into the language, slice/array
-    bounds checks are on by default, and its context/arena-allocator
-    idiom fits per-frame UI allocation perfectly. GUI code that PARSES
-    untrusted text (the intent grammar) stays Zig - Odin lets integer
-    overflow wrap silently, Zig ReleaseSafe traps it, and parsers are
-    where that difference matters. Odin is pre-1.0 with rolling
-    releases: pin the version exactly as with Zig. Note the sandbox
-    contains any GUI-component bug regardless - relaxing strictness
-    here is safe in a way it would not be for kernel code.
+  - Zig also owns the GUI's visual components in Phase 8: compositor
+    decisions, widget-tree rendering, layout, and animation. These compile
+    to freestanding WASM like every other component. Graphics helpers use
+    Zig vectors, explicit math types, and purpose-built frame arenas;
+    native C/Zig host functions handle measured pixel fast paths. Keeping
+    this layer in Zig removes a second pre-1.0 toolchain and gives UI code,
+    intent parsing, services, and applications one safety model and SDK.
   - WebAssembly as the application ABI. Vendored runtime: WAMR
     (wasm-micro-runtime, Bytecode Alliance) in "interpreter" mode - it is
     written in C, supports bare-metal/no-OS targets through a platform
     abstraction layer you implement, and interpreter mode keeps execution
     deterministic (no JIT), which record/replay needs. Fallback for study:
     wasm3 (smaller, simpler interpreter, also C).
-  - Apps: ZIG is the official first-class app language - it already has
-    an SDK, it is already in the toolchain, and choosing it keeps one
-    language across kernel boundaries, services, and apps. Because the
-    ABI is plain WASM, C, Rust, and Odin also work first-class; other
-    WASM-targeting languages remain technically possible but unsupported
-    (see the determinism contract tiers).
+  - Apps: ZIG is the official first-class app language. Applications and
+    disposable micro-runtimes compile to the same WASM component ABI as
+    system services. C and Rust remain technically possible over that ABI,
+    but Jani maintains and documents only the Zig application SDK.
 
-THE ZIG HARDENING STRATEGY (the kernel stays majority C)
+THE ZIG EXPANSION STRATEGY (the kernel stays majority C)
 
-  Zig enters the project three ways, in increasing order of commitment:
+  Zig enters the project four ways, in increasing order of commitment:
 
   Z1  TOOLCHAIN (from Phase 0): build the C kernel with "zig cc" instead
       of building a GCC cross-compiler.
       - One small download gives you a full C cross-compiler for any
         target (x86_64 freestanding ELF included) - the entire "build a
         cross-GCC" chore in Part 3 disappears.
-      - The payoff that matters for aeon: in debug builds, zig cc
+      - The payoff that matters for Jani OS: in debug builds, zig cc
         compiles C with UndefinedBehaviorSanitizer in TRAP mode by
         default. Signed overflow, null/misaligned dereference, oversized
         shifts, and similar UB in YOUR C code hit an immediate CPU trap
@@ -291,20 +282,30 @@ THE ZIG HARDENING STRATEGY (the kernel stays majority C)
       proof; it is a runtime seatbelt on exactly the code most likely
       to crash the car.
 
-  Z3  SYSTEM COMPONENTS IN ZIG (from Phase 3, optional per component):
+  Z3  SYSTEM COMPONENTS IN ZIG (from Phase 3, the project default):
       WASM is a first-class Zig compile target, so the components/
       directory (drivers, index, compositor, orchestrator) can be
-      written in Zig instead of C, gaining the same safety checks
-      inside the sandbox. Recommended default for new components;
-      the kernel underneath remains C.
+      written in Zig, gaining the same safety checks inside the sandbox.
+      New first-party components use Zig unless a vendored C library or a
+      measured native fast path gives a concrete reason not to.
+
+  Z4  DESKTOP AND APPLICATION PLATFORM (from Phase 3 onward):
+      sdk/zig is the official application SDK. It begins with syscall and
+      mailbox wrappers, then grows schema-generated object accessors,
+      capability types, CRDT helpers, UI-tree builders, and testing tools.
+      Each app is a Zig project compiled to freestanding WASM. In Phase 8,
+      the compositor, widget renderer, intent providers, and applications
+      all use this same SDK. Performance-sensitive pixel loops become
+      native Zig/C host functions only after profiling proves the need.
 
   RULES OF ENGAGEMENT (so the hybrid stays disciplined):
       - The kernel's core structures and algorithms (object store,
         scheduler, capability engine, memory managers) remain C - Zig
         modules are leaves, never the trunk.
-      - Every Zig module hides behind a hand-written C header; the
-        boundary is always the C ABI. If a module's C header gets
-        complicated, the module is too big - split it or shrink it.
+      - Every native Zig module linked into the kernel hides behind a
+        hand-written C header. Sandboxed Zig WASM components instead hide
+        behind the versioned IDL/component ABI and never link into the
+        kernel directly.
       - Pin the Zig version in the repo (a version file + vendored
         tarball note): Zig is pre-1.0 and has breaking releases;
         upgrade deliberately once per phase at most.
@@ -321,13 +322,13 @@ LANGUAGE MAP BY LAYER (the complete picture)
   Kernel trust boundaries        Zig ReleaseSafe modules behind C headers
     (parsers/validators)           (R8)
   CPU glue                       x86_64 assembly, ~300 lines total
-  OS services (naming, net       WASM components - Zig recommended (Z3);
-    stack, index, policy,          C compiles to WASM fine too; languages
-    supervisor, drivers)           can mix freely per component
-  GUI visual components          WASM components in ODIN (built-in
-    (compositor decisions,         vector/matrix math + swizzles,
-    widget renderer, layout,       default bounds checks, per-frame
-    animation)                     arena allocators)
+  OS services (naming, net       WASM components in Zig by default (Z3);
+    stack, index, policy,          the ABI remains language-neutral for
+    supervisor, drivers)           third-party components
+  GUI visual components          WASM components in Zig (explicit graphics
+    (compositor decisions,         math types, checked slices, purpose-built
+    widget renderer, layout,       frame arenas, shared sdk/zig UI builders)
+    animation)
   GUI parsing + coordination     WASM components in Zig (checked
     (intent grammar,               arithmetic on untrusted user text)
     orchestrator)
@@ -339,23 +340,23 @@ LANGUAGE MAP BY LAYER (the complete picture)
                                    not code (they version, sync, and
                                    roll back like everything else);
                                    training happens OFF-OS - no Python
-                                   anywhere on aeon
+                                   anywhere on Jani OS
   GUI pixel fast paths (blit,    native C/Zig HOST FUNCTIONS in the kernel
     blend, fill)                   (see Phase 8 - interpreted WASM is too
                                    slow for 60fps pixel work)
   Micro-runtime UI output        not code - declarative widget-tree DATA
                                    objects, language-agnostic
-  Apps / micro-runtimes          ZIG (official, SDK-supported); C, Rust,
-                                   Odin also first-class over the same
-                                   WASM ABI; other languages possible
-                                   but unsupported
+  Apps / micro-runtimes          ZIG (official and SDK-supported); other
+                                   WASM languages are ABI-compatible but
+                                   are not maintained first-class targets
 
   There is no monolithic "OS layer written in language X": above the
   kernel, every service and every piece of the GUI is an independent WASM
-  component, and language is a per-component choice. Zig is the
-  recommended default because its safety checks work identically compiled
-  to wasm32, and it is already in the toolchain (Z1). Performance upgrade
-  path for any component that needs it: WAMR's AOT mode (ahead-of-time
+  component. All first-party components use Zig, while the ABI remains
+  language-neutral for outside ports. Zig's safety checks work identically
+  compiled to wasm32, and it is already in the toolchain (Z1). The
+  performance upgrade path for any component that needs it is WAMR's AOT
+  mode (ahead-of-time
   compilation to native - still deterministic, unlike a JIT), adopted
   per-component without changing its source.
 
@@ -374,8 +375,8 @@ LANGUAGE-LAYER CONTRACTS (what the goals force beyond language choice)
       - intent-provider manifests (which verbs fulfilled, Phase 8)
       - per-type CRDT merge discipline (Phase 5)
     A host-side tool (tools/idlc) parses .idl files and generates
-    accessor/stub code for C, Zig, and Odin - one schema, one source of
-    truth, every language. SCHEMAS ARE THEMSELVES OBJECTS IN THE STORE:
+    accessor/stub code for C and Zig - one schema, one source of truth,
+    both supported languages. SCHEMAS ARE THEMSELVES OBJECTS IN THE STORE:
     every type ID in an object header points at a schema object, so the
     system is self-describing - hot-swap checks and semantic queries
     over types both read schemas at runtime. Keep the IDL brutally
@@ -383,9 +384,9 @@ LANGUAGE-LAYER CONTRACTS (what the goals force beyond language choice)
     interface = a list of typed messages. Nothing else until needed.
 
   COMPONENT SDKs - thin per-language libraries
-    sdk/c, sdk/zig, sdk/odin (a few hundred lines each) embody the actor
-    ABI so every component agrees on it: handler export names, mailbox
-    and capability syscall wrappers, bounds-checked object accessors
+    sdk/c and sdk/zig embody the actor ABI so every component agrees on
+    it: handler export names, mailbox and capability syscall wrappers,
+    bounds-checked object accessors
     generated from schemas, CRDT types, and (Phase 8) the widget-tree
     builder. THE PAYLOAD LAW lives here: persistent object payloads
     contain object IDs and offsets, NEVER language pointers - a pointer
@@ -403,10 +404,10 @@ LANGUAGE-LAYER CONTRACTS (what the goals force beyond language choice)
       - components are single-threaded instances; concurrency is many
         components exchanging messages, never shared-memory threads
     Language tiers under the contract:
-      Tier 1 (first-class): C, Zig, Odin, Rust - no runtime; nothing
-        nondeterministic that does not arrive via syscall. ZIG IS THE
-        OFFICIAL APP LANGUAGE: one language then spans kernel trust
-        boundaries, system services, and apps, and the SDK you already
+      Tier 1 (first-class): Zig, plus C at kernel/native boundaries - no
+        runtime; nothing nondeterministic that does not arrive via syscall.
+        ZIG IS THE OFFICIAL APP LANGUAGE: one language then spans kernel
+        trust boundaries, system services, and apps, and the SDK you already
         maintain covers everything.
       Tier 2 (possible, unsupported): managed-runtime languages (Go,
         C#, ...) can compile to WASM and would even replay correctly -
@@ -444,8 +445,6 @@ TOOLS TO INSTALL (Fedora)
   - make (plain Makefiles are fine for the whole project)
   - git (commit at every green milestone, no exceptions)
   - swtpm (software TPM for QEMU - not needed until Phase 7)
-  - the Odin compiler (not needed until Phase 8's GUI components; pin the
-    release when you adopt it, same discipline as the Zig pin)
   - TLA+ tools (the tla2tools jar or the VS Code TLA+ extension) for the
     R9 protocol models (used in Phases 2 and 5)
   - clang-format, clang-tidy, and a fuzzer (libFuzzer comes with clang) for
@@ -477,7 +476,7 @@ PART 4 - C ENGINEERING DISCIPLINE
 ================================================================================
 
 Why this section exists: in Linux, a wild pointer write crashes a process and
-the damage dies at reboot. In aeon, all state is persistent - a wild write
+the damage dies at reboot. In Jani OS, all state is persistent - a wild write
 can silently poison an object that then gets checksummed... no. Read I4
 again: checksum BEFORE snapshot is your immune system, and these rules are
 your hygiene. A memory bug here can corrupt your persistent world FOREVER.
@@ -528,7 +527,7 @@ THE RULES
   R8  ZIG AT THE TRUST BOUNDARIES. Any code that parses or validates bytes
       the kernel does not fully control - disk records, network frames,
       WASM modules, syscall arguments, user input - is written as a Zig
-      module (ReleaseSafe) behind a C header, per the Zig Hardening
+      module (ReleaseSafe) behind a C header, per the Zig Expansion
       Strategy in Part 3. If you find yourself writing a byte-parsing loop
       in C, stop: that loop belongs in a Zig module. The kernel's trunk
       stays C; the places where hostile bytes enter get the seatbelt.
@@ -559,7 +558,7 @@ next.
 PHASE 0 - BARE-METAL ON-RAMP                          (~1,500-3,000 lines C)
 --------------------------------------------------------------------------------
 GOAL: A kernel that boots, prints, and takes interrupts. This phase is pure
-learning - nothing aeon-specific yet - and it is where you internalize the
+learning - nothing Jani-specific yet - and it is where you internalize the
 machine.
 
 BUILD, IN ORDER:
@@ -738,8 +737,8 @@ BUILD, IN ORDER:
      (this IS zero-copy IPC, U14: the payload is an object reference);
      receive from mailbox; get logical time; exit. Declare every one of
      these signatures in IDL v1 (see Language-Layer Contracts, Part 3) -
-     the IDL's first real use - and this is also the moment sdk/c,
-     sdk/zig, and sdk/odin are born: thin stubs generated from the IDL
+     the IDL's first real use - and this is also the moment sdk/c and
+     sdk/zig are born: thin stubs generated from the IDL
      that every later component builds on. Enforce the determinism
      contract in the WAMR port now (NaN canonicalization, no ambient
      entropy) - it is nearly free at this stage and unpayable later.
@@ -783,7 +782,7 @@ BUILD, IN ORDER:
      appends (component ID, operation, logical time) to the object's
      provenance ledger (U6) - ring-buffer it per object to bound growth.
   2. SCHEDULER: components with pending mailbox messages are runnable.
-     Round-robin first. Then priorities. Then two aeon-specific classes:
+     Round-robin first. Then priorities. Then two Jani-specific classes:
      - INTERACTIVE CLASS (U9): components flagged interactive (input
        handling, later the compositor) get a reserved time budget per
        frame period; the scheduler admits background work only after the
@@ -919,8 +918,8 @@ BUILD, IN ORDER:
      WEIGHTS ARE ORDINARY STORE OBJECTS, not code: they version (roll back
      a bad model, U1), replicate to your other nodes (Phase 5), and are
      provenance-tracked like everything else. Training happens off-device
-     on a normal Linux machine; aeon only consumes quantized weight
-     artifacts - no Python ever runs on aeon. CPU-only is fine at hobby
+     on a normal Linux machine; Jani OS only consumes quantized weight
+     artifacts - no Python ever runs on Jani OS. CPU-only is fine at hobby
      scale.
   5. CONTEXTUAL PERMISSIONS (Pillar 4's security half): a policy component
      that grants/attenuates capabilities based on declared context (what
@@ -981,7 +980,7 @@ BUILD, IN ORDER:
      objects (already true if Phase 3/4 driver discipline held - verify
      it); device-originated data is untrusted input (fuzz the parsers that
      touch it, R3).
-  5. CONFIDENTIAL-COMPUTING MAPPING (design document, not code): how aeon
+  5. CONFIDENTIAL-COMPUTING MAPPING (design document, not code): how Jani OS
      runs as a SEV-SNP/TDX guest - what the attestation report proves to a
      remote party, how remote attestation + U8 identity compose. QEMU can
      emulate some of this; real hardware is a later luxury.
@@ -996,7 +995,7 @@ NIST FIPS 203 overview materials for ML-KEM; AMD SEV-SNP and Intel TDX
 whitepapers (skim for the trust model); TPM2 PCR/sealing tutorials.
 
 --------------------------------------------------------------------------------
-PHASE 8 - THE INTENT UI                               (~4,000-8,000 lines C)
+PHASE 8 - THE INTENT UI                             (~4,000-8,000 lines Zig)
 --------------------------------------------------------------------------------
 GOAL: The visible revolution - no apps, one canvas, disposable micro-
 runtimes. Lands: Pillar 5, U9 visible, U13 completed, U17 (declarative
@@ -1004,8 +1003,7 @@ state).
 
 BUILD, IN ORDER:
   1. COMPOSITOR as a component in the INTERACTIVE scheduling class (U9 pays
-     off here), WRITTEN IN ODIN (see the Language Map - its built-in
-     vector math and per-frame arena allocators are made for this): owns
+     off here), WRITTEN IN ZIG (see the Language Map): owns
      the framebuffer capability; other components render into shared
      surface objects (zero-copy, U14 - a surface is just an object both
      sides hold capabilities to); the compositor blends damage regions per
@@ -1014,7 +1012,7 @@ BUILD, IN ORDER:
      pixel pushing; the compositor makes the DECISIONS, the host functions
      move the bytes. Keyboard/mouse -> input events -> focused component's
      mailbox.
-  2. A WIDGET VOCABULARY, not a toolkit (renderer also Odin): micro-runtimes
+  2. A WIDGET VOCABULARY, not a toolkit (renderer also Zig): micro-runtimes
      emit declarative UI
      descriptions (a tree of text/list/image/button/input nodes) as
      objects; the compositor renders them. This keeps micro-runtimes tiny
@@ -1066,7 +1064,7 @@ app-less computing).
 PART 6 - SCALE EXPECTATIONS AND REALISM NOTES
 ================================================================================
 
-HAND-WRITTEN C PER PHASE (rough, honest ranges)
+HAND-WRITTEN CORE CODE PER PHASE (rough, honest ranges)
 
   Phase 0  On-ramp            1,500 -  3,000
   Phase 1  Memory             2,000 -  4,000
@@ -1078,12 +1076,13 @@ HAND-WRITTEN C PER PHASE (rough, honest ranges)
   Phase 7  Zero-trust         2,000 -  4,000   (+ ML-KEM ~3k vendored)
   Phase 8  Intent UI          4,000 -  8,000
   ------------------------------------------------
-  TOTAL                     ~25,000 - 50,000 lines of your C
+  TOTAL                     ~25,000 - 50,000 lines of your C and Zig
 
-Of that total, expect roughly 15-25% to end up as Zig rather than C - the
-trust-boundary modules (R8) plus any components you choose to write in Zig
-(Z3). The kernel trunk remains majority C throughout; the Zig share is
-concentrated exactly where bytes from disk, network, and users enter.
+Those estimates describe the C-heavy kernel and vendored native core, not
+the growing application ecosystem. The kernel trunk remains majority C,
+while first-party code above it is Zig: trust-boundary modules (R8), system
+components, desktop/UI components, and applications. From Phase 3 onward,
+expect Zig to become the majority of newly written non-kernel code.
 
 CALIBRATION: xv6, a complete teaching Unix, is ~6k lines. Redox's kernel is
 ~30k. Linux is ~30 million. This project sits squarely in serious-research-
@@ -1123,7 +1122,7 @@ SCOPE DEFENSE (the three classic ways this project dies, and the antidotes):
 PART 7 - SUGGESTED PROJECT LAYOUT (create when you start coding)
 ================================================================================
 
-  aeon/
+  jani/
     Makefile                 top-level: build kernel, build ISO, run QEMU,
                              run hosted tests, run fuzzers
     kernel/
@@ -1152,12 +1151,11 @@ PART 7 - SUGGESTED PROJECT LAYOUT (create when you start coding)
                              project): blk-driver, net-driver, net-stack,
                              naming, index, policy, compositor, intent,
                              orchestrator, supervisor
-                             languages per the Language Map: services in
-                             Zig; compositor + widget renderer in Odin;
-                             intent grammar + orchestrator in Zig
-    .odin-version            pinned Odin release (adopted at Phase 8)
-    sdk/                     per-language component SDKs: sdk/c, sdk/zig,
-                             sdk/odin - the actor ABI, syscall wrappers,
+                             all first-party components use Zig: services,
+                             compositor, widget renderer, intent grammar,
+                             orchestrator, and applications
+    sdk/                     supported component SDKs: sdk/c and sdk/zig -
+                             the actor ABI, syscall wrappers,
                              schema-generated accessors, CRDT types
                              (sdk/zig doubles as the official app SDK)
     idl/                     the .idl interface/schema definitions - the

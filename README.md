@@ -1,4 +1,4 @@
-# aeon
+# Jani OS
 
 A from-scratch, next-generation operating system built around five pillars:
 
@@ -21,27 +21,33 @@ store, capabilities, and WASM components.
 
 ## Languages
 
-- **C** — kernel trunk (built with `zig cc`)
-- **Zig** — kernel trust boundaries, system services, apps, the official SDK
-- **Odin** — GUI visual components only
+- **C** — small privileged kernel trunk (built with `zig cc`)
+- **Zig** — kernel trust boundaries and the primary language for system
+  services, desktop/UI components, applications, and the official SDK
 - **WASM** — the ABI for everything above the kernel (WAMR, interpreter mode)
 - ~300 lines of x86_64 assembly, total
 
+Zig expands with the project: it is the C toolchain in Phase 0, begins
+providing native safety-boundary modules in Phase 2, targets WASM for services
+and applications from Phase 3 onward, and implements the compositor, widget
+renderer, and intent-driven desktop in Phase 8. No Odin toolchain or Odin SDK
+is planned; components previously assigned to Odin will be written in Zig.
+
 ## Where everything is
 
-- **`aeon-os-blueprint.txt`** — the complete blueprint: architecture, all
+- **`jani-os-blueprint.txt`** — the complete blueprint: architecture, all
   nine phases, milestones, reading lists. This is the map for the whole
   project. Read Part 2 (architecture) and Part 4 (C discipline) before
   writing anything.
 - **`START-HERE.txt`** — the concrete first-session checklist for Phase 0.
 - **`docs/devlog.md`** — the development log. One entry per session; your
   future self debugging Phase 5 will thank present you.
-- Directory layout matches Part 7 of the blueprint; every folder is empty
-  on purpose — the code is mine to write.
+- Directory layout follows Part 7 of the blueprint and grows one phase at a
+  time. Phase 0's boot, architecture, driver, and kernel-library code is live.
 
 ## Status
 
-- [ ] Phase 0 — bare-metal on-ramp (boot, print, interrupts)
+- [x] Phase 0 — bare-metal on-ramp (boot, print, interrupts)
 - [ ] Phase 1 — memory & the single address space
 - [ ] Phase 2 — persistent object store
 - [ ] Phase 3 — WASM runtime as userspace  ← the "wow" demo lives here

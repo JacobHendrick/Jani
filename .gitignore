@@ -1,0 +1,7 @@
+# Build artifacts
+build/
+
+# Vendored Zig toolchain: not committed (391 MB). The pinned release lives
+# in .zig-version -- download that exact version from ziglang.org/download
+# and unpack it as third_party/zig/ so that third_party/zig/zig exists.
+third_party/zig/
