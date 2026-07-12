@@ -5,6 +5,13 @@ QEMU := qemu-system-x86_64
 XORRISO := xorriso
 QEMU_FLAGS := -cpu qemu64,-apic
 
+# Hosted twin (blueprint rule R3): kernel allocator code compiled as normal
+# Linux binaries under sanitizers. clang, not zig cc: zig does not ship the
+# ASan runtime for host targets (verified), and clang bundles libFuzzer.
+HOST_CC := clang
+HOST_CFLAGS := -Wall -Wextra -Werror -g -O1 \
+	-fsanitize=address,undefined -fno-omit-frame-pointer
+
 BUILD_DIR := build
 ISO_ROOT := $(BUILD_DIR)/iso_root
 ZIG_GLOBAL_CACHE_DIR := $(abspath $(BUILD_DIR)/zig-global-cache)
@@ -65,7 +72,10 @@ CFLAGS := -target x86_64-freestanding-none \
 
 LDFLAGS := -T $(LINKER_SCRIPT)
 
-.PHONY: all check-tools kernel iso run run-debug clean
+HOSTED_DIR := tools/hosted
+TEST_PMM_BIN := $(BUILD_DIR)/test_pmm
+
+.PHONY: all check-tools kernel iso run run-debug test clean
 
 all: iso
 
@@ -166,6 +176,13 @@ $(ISO_IMAGE): $(KERNEL_ELF) $(LIMINE_CONFIG)
 		$(ISO_ROOT) \
 		-o $(ISO_IMAGE)
 	$(LIMINE_DIR)/limine bios-install $(ISO_IMAGE)
+
+test: $(TEST_PMM_BIN)
+	$(TEST_PMM_BIN)
+
+$(TEST_PMM_BIN): $(PMM_SOURCE) $(HOSTED_DIR)/test_pmm.c $(HOSTED_DIR)/stubs.c $(HOSTED_DIR)/fake_memory_map.c $(HOSTED_DIR)/fake_memory_map.h $(HOSTED_DIR)/check.h Makefile
+	mkdir -p $(BUILD_DIR)
+	$(HOST_CC) $(HOST_CFLAGS) $(PMM_SOURCE) $(HOSTED_DIR)/stubs.c $(HOSTED_DIR)/fake_memory_map.c $(HOSTED_DIR)/test_pmm.c -o $(TEST_PMM_BIN)
 
 run: $(ISO_IMAGE)
 	$(QEMU) $(QEMU_FLAGS) -cdrom $(ISO_IMAGE) -serial stdio
