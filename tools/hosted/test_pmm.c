@@ -26,38 +26,114 @@ static void boot_simple_machine(uint64_t frames) {
     pmm_init();
 }
 
-/*
- * TODO(jacob) test 1 - init counts what the map offers.
- *   boot_simple_machine(64): what must pmm_get_free_frame_count() say?
- *
- * TODO(jacob) test 2 - allocation basics.
- *   Every pmm_alloc_frame() result should be nonzero, 4 KiB aligned,
- *   inside the scripted region, and pmm_frame_is_used() afterward.
- *   Two consecutive allocations must return different frames.
- *
- * TODO(jacob) test 3 - free really frees.
- *   alloc -> free -> the free count returns to its starting value, and
- *   the same frame can be allocated again.
- *
- * TODO(jacob) test 4 - exhaustion.
- *   Drain a small machine dry: exactly the expected number of frames
- *   come out, then pmm_alloc_frame() returns 0. Free one frame and the
- *   next allocation must succeed again.
- *
- * TODO(jacob) test 5 - hostile frees are refused.
- *   pmm_free_frame(0), an unaligned address, a never-allocated address:
- *   none of them may disturb the free count. (R1 thinking: invalid
- *   input is refused, not absorbed.)
- *
- * TODO(jacob) test 6 - the map is clipped and aligned.
- *   A usable region straddling PMM_MAX_PHYSICAL_MEMORY contributes only
- *   the frames below the cap. A region whose base is NOT frame-aligned
- *   must start at the next whole frame, not the partial one.
- */
+static void test_init_counts_the_map(void) {
+    boot_simple_machine(64);
+    CHECK(pmm_get_free_frame_count() == 64);
+
+    boot_simple_machine(1);
+    CHECK(pmm_get_free_frame_count() == 1);
+}
+
+static void test_allocation_basics(void) {
+    uint64_t first;
+    uint64_t second;
+
+    boot_simple_machine(64);
+
+    first = pmm_alloc_frame();
+    CHECK(first != 0);
+    CHECK((first % PMM_FRAME_SIZE) == 0);
+    CHECK(first >= 0x100000);
+    CHECK(first < 0x100000 + (64 * PMM_FRAME_SIZE));
+    CHECK(pmm_frame_is_used(first / PMM_FRAME_SIZE));
+
+    second = pmm_alloc_frame();
+    CHECK(second != 0);
+    CHECK(second != first);
+    CHECK(pmm_get_free_frame_count() == 62);
+}
+
+static void test_free_really_frees(void) {
+    uint64_t allocated;
+    uint64_t count_before;
+
+    boot_simple_machine(8);
+    count_before = pmm_get_free_frame_count();
+
+    allocated = pmm_alloc_frame();
+    CHECK(pmm_get_free_frame_count() == count_before - 1);
+
+    pmm_free_frame(allocated);
+    CHECK(pmm_get_free_frame_count() == count_before);
+    CHECK(!pmm_frame_is_used(allocated / PMM_FRAME_SIZE));
+    CHECK(pmm_alloc_frame() == allocated);
+}
+
+static void test_exhaustion(void) {
+    uint64_t frames[8];
+    uint64_t index;
+
+    boot_simple_machine(8);
+
+    for (index = 0; index < 8; index++) {
+        frames[index] = pmm_alloc_frame();
+        CHECK(frames[index] != 0);
+    }
+
+    CHECK(pmm_get_free_frame_count() == 0);
+    CHECK(pmm_alloc_frame() == 0);
+
+    pmm_free_frame(frames[3]);
+    CHECK(pmm_alloc_frame() == frames[3]);
+}
+
+static void test_hostile_frees_are_refused(void) {
+    uint64_t allocated;
+    uint64_t count_before;
+
+    boot_simple_machine(8);
+    allocated = pmm_alloc_frame();
+    CHECK(allocated != 0);
+    count_before = pmm_get_free_frame_count();
+
+    pmm_free_frame(0);
+    pmm_free_frame(allocated + 123);
+    pmm_free_frame(PMM_MAX_PHYSICAL_MEMORY);
+    CHECK(pmm_get_free_frame_count() == count_before);
+
+    pmm_free_frame(allocated);
+    CHECK(pmm_get_free_frame_count() == count_before + 1);
+    pmm_free_frame(allocated);
+    CHECK(pmm_get_free_frame_count() == count_before + 1);
+}
+
+static void test_map_clipping_and_alignment(void) {
+    fake_memory_map_reset();
+    fake_memory_map_add(PMM_MAX_PHYSICAL_MEMORY - (4 * PMM_FRAME_SIZE),
+                        8 * PMM_FRAME_SIZE, MEMORY_MAP_USABLE);
+    pmm_init();
+    CHECK(pmm_get_free_frame_count() == 4);
+
+    fake_memory_map_reset();
+    fake_memory_map_add(PMM_MAX_PHYSICAL_MEMORY, 8 * PMM_FRAME_SIZE,
+                        MEMORY_MAP_USABLE);
+    pmm_init();
+    CHECK(pmm_get_free_frame_count() == 0);
+
+    fake_memory_map_reset();
+    fake_memory_map_add(0x100000 + 123, 2 * PMM_FRAME_SIZE,
+                        MEMORY_MAP_USABLE);
+    pmm_init();
+    CHECK(pmm_get_free_frame_count() == 1);
+}
 
 int main(void) {
-    /* Proof of life for the harness; replace with calls to your tests. */
-    boot_simple_machine(64);
+    test_init_counts_the_map();
+    test_allocation_basics();
+    test_free_really_frees();
+    test_exhaustion();
+    test_hostile_frees_are_refused();
+    test_map_clipping_and_alignment();
 
     printf("test_pmm: %lu checks passed\n", checks_passed);
     return 0;
