@@ -192,3 +192,14 @@ run-debug: $(ISO_IMAGE)
 
 clean:
 	rm -rf $(BUILD_DIR)
+
+# --- TLA+ model checking (Phase 2, blueprint R9) -----------------------------
+TLA_TOOLS := third_party/tla2tools.jar
+TLA_TOOLS_URL := https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar
+TLA_TOOLS_SHA256 := 936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88
+TLC_FLAGS := -workers auto -deadlock -cleanup
+
+$(TLA_TOOLS):
+	mkdir -p third_party
+	curl -fL -o $(TLA_TOOLS) $(TLA_TOOLS_URL)
+	echo "$(TLA_TOOLS_SHA256)  $(TLA_TOOLS)" | sha256sum -c -
