@@ -199,7 +199,18 @@ TLA_TOOLS_URL := https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla
 TLA_TOOLS_SHA256 := 936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88
 TLC_FLAGS := -workers auto -deadlock -cleanup
 
+# The pinned sha256 is trust-on-first-use: hashed from the official
+# github.com/tlaplus release download on 2026-07-15 (upstream publishes no
+# checksums). The committed jar is the artifact of record; this rule only
+# re-fetches on clean checkouts, and the pin detects a changed download.
+# Download to a temp path and verify BEFORE moving into place: a failed
+# check must not leave a jar where make would treat it as a valid target.
 $(TLA_TOOLS):
 	mkdir -p third_party
-	curl -fL -o $(TLA_TOOLS) $(TLA_TOOLS_URL)
-	echo "$(TLA_TOOLS_SHA256)  $(TLA_TOOLS)" | sha256sum -c -
+	curl -fL -o $(TLA_TOOLS).tmp $(TLA_TOOLS_URL)
+	echo "$(TLA_TOOLS_SHA256)  $(TLA_TOOLS).tmp" | sha256sum -c -
+	mv $(TLA_TOOLS).tmp $(TLA_TOOLS)
+
+model-check: $(TLA_TOOLS)
+	cd docs/models && java -XX:+UseParallelGC -cp $(abspath $(TLA_TOOLS)) \
+	  tlc2.TLC $(TLC_FLAGS) -config WalCommit.cfg WalCommit.tla
