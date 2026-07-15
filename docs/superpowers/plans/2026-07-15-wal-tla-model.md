@@ -4,6 +4,35 @@
 
 **Goal:** A model-checked TLA+ specification proving the Phase 2 WAL commit/recovery protocol never loses or tears a committed object version across crashes, per blueprint rule R9.
 
+## Execution status (2026-07-15, session handoff)
+
+- **Task 1 COMPLETE** (commit `9fd255d7`): jar vendored, sha256 pinned
+  (`936a262...e88`), download rule hardened after a security-review finding
+  (verify on a `.tmp` path, then `mv` — a failed check must not leave a jar
+  where make treats it as a valid target; pin is documented trust-on-first-use).
+- **Task 2 COMPLETE** (commit `504e9a84`): abstract spec green, 712 states.
+- **Task 3 COMPLETE** (commit `c374deda`): concrete spec crash-free green,
+  7,573 states, `TypeOK` + `HistoryMatch`. `make model-check` works.
+- **Task 4 NEXT** — designed to be written by Jacob (see task header); the
+  two TODO markers are in `docs/models/WalCommit.tla`. All semantics needed
+  are in the task's Guidance paragraphs.
+- **Tasks 5–7 not started.**
+
+**Deviation from the code below (already applied in the committed spec):**
+TLC rejects comparing a record with a string, so `None == "none"` was
+replaced by an `IdleOp` record (`st = "idle"`, other fields dummies) —
+tests are `op.st = "idle"` / `op' = IdleOp`. The snippets in Tasks 4–5
+below have been updated to match; trust the committed `WalCommit.tla`
+over any remaining prose that says `None`.
+
+**WARNING — mixed working tree:** the repo contains uncommitted Phase 1
+heap work (untracked `kernel/mm/*`, `tools/hosted/*` files and Makefile
+edits) that must NOT be swept into model commits. Never `git add -A`.
+When a task modifies the Makefile's TLA+ section: save the working
+Makefile aside, `git show HEAD:Makefile > Makefile`, apply only the TLA+
+hunk, commit, then restore the saved copy (the TLA+ sections must end up
+byte-identical so the residual diff stays purely Phase 1).
+
 **Architecture:** Two specs in `docs/models/`: `WalCommitAbstract.tla` states the promise (atomic durable commits); `WalCommit.tla` models the protocol at sector level with a pending-write cache and subset-crash semantics, and refines the abstract spec via a history-variable mapping. TLC checks invariants plus the refinement; three flag-selected mutants prove the model can fail.
 
 **Tech Stack:** TLA+ (raw actions, no PlusCal), TLC via vendored `tla2tools.jar` v1.7.4, system Java, GNU Make.
@@ -29,7 +58,7 @@
 **Interfaces:**
 - Produces: `$(TLA_TOOLS)` make variable and download rule; later tasks add `model-check` / `model-check-negative` targets that depend on it.
 
-- [ ] **Step 1: Download the jar and record its hash**
+- [x] **Step 1: Download the jar and record its hash**
 
 ```bash
 mkdir -p third_party
@@ -40,7 +69,7 @@ sha256sum third_party/tla2tools.jar
 
 Expected: download succeeds; note the printed sha256 — it is pasted into the Makefile in Step 2.
 
-- [ ] **Step 2: Add the TLA+ section to the Makefile**
+- [x] **Step 2: Add the TLA+ section to the Makefile**
 
 Append at the end of `Makefile` (replace `<PASTE-SHA256-HERE>` with Step 1's value):
 
@@ -59,7 +88,7 @@ $(TLA_TOOLS):
 
 Note: `-deadlock` DISABLES deadlock reporting (finished behaviors where no action is enabled are expected, not errors); `-cleanup` removes TLC's states directory afterward.
 
-- [ ] **Step 3: Verify the hash check and that TLC runs**
+- [x] **Step 3: Verify the hash check and that TLC runs**
 
 ```bash
 echo "$(grep '^TLA_TOOLS_SHA256' Makefile | cut -d' ' -f3)  third_party/tla2tools.jar" | sha256sum -c -
@@ -68,7 +97,7 @@ java -cp third_party/tla2tools.jar tlc2.TLC -h | head -3
 
 Expected: `third_party/tla2tools.jar: OK`, then TLC usage text (proves system Java can run it).
 
-- [ ] **Step 4: Commit (force-add if third_party is gitignored)**
+- [x] **Step 4: Commit (force-add if third_party is gitignored)**
 
 ```bash
 git check-ignore third_party/tla2tools.jar && ADD="-f" || ADD=""
@@ -89,7 +118,7 @@ git commit -m "Vendor TLC (tla2tools 1.7.4) for R9 protocol models
 **Interfaces:**
 - Produces: module `WalCommitAbstract` with constants `Objects, Vals, MaxOps` and variables `store, acked, inflight, nextOp`; actions `Begin(o,v)`, `Commit`, `CrashLose`, `CrashKeep`; `Spec`. Task 5 instantiates it with `INSTANCE WalCommitAbstract WITH store <- hstore, acked <- acked, inflight <- AbsInflight, nextOp <- nextOp`.
 
-- [ ] **Step 1: Write the spec**
+- [x] **Step 1: Write the spec**
 
 `docs/models/WalCommitAbstract.tla`:
 
@@ -159,7 +188,7 @@ Spec == Init /\ [][Next]_vars
 ================================================================================
 ```
 
-- [ ] **Step 2: Write its TLC config**
+- [x] **Step 2: Write its TLC config**
 
 `docs/models/WalCommitAbstract.cfg`:
 
@@ -172,7 +201,7 @@ SPECIFICATION Spec
 INVARIANT TypeOK
 ```
 
-- [ ] **Step 3: Run TLC — expect green**
+- [x] **Step 3: Run TLC — expect green**
 
 ```bash
 cd docs/models && java -cp ../../third_party/tla2tools.jar tlc2.TLC \
@@ -181,7 +210,7 @@ cd docs/models && java -cp ../../third_party/tla2tools.jar tlc2.TLC \
 
 Expected: `Model checking completed. No error has been found.` with a few hundred states at most. A parse error or invariant violation means a transcription mistake — fix before proceeding.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add docs/models/WalCommitAbstract.tla docs/models/WalCommitAbstract.cfg
@@ -202,7 +231,7 @@ git commit -m "R9: abstract WAL commit spec (the atomic-durable promise)
 - Consumes: `$(TLA_TOOLS)` from Task 1.
 - Produces (used by Tasks 4–6): helpers `Merge(f,g)`, `Put(f,s,c)`, `Content(s)`, `RecordValid(d,s)`, `LooksValid(d,s)`, `ScanStart(d)`, `ValidLen(d)`, `HomeTable(d)`, `Replay(d)`, `ReplayNext(d)`, `Recovers(d,id,o)`, `Last(seq)`, `EmptyCache`, `None`, `Free`; variables exactly as declared below; constants `BUGGY_NO_WAL_FLUSH`, `BUGGY_TRUNCATE_FIRST`, `BUGGY_SKIP_CHECKSUM`.
 
-- [ ] **Step 1: Write the module**
+- [x] **Step 1: Write the module**
 
 `docs/models/WalCommit.tla` — note the two `TODO(Task N)` markers; they are placeholders the LATER tasks fill, and TLC is not asked to check them yet:
 
@@ -456,7 +485,7 @@ HistoryMatch ==
 ================================================================================
 ```
 
-- [ ] **Step 2: Write the TLC config (crash-free for now)**
+- [x] **Step 2: Write the TLC config (crash-free for now)**
 
 `docs/models/WalCommit.cfg`:
 
@@ -474,7 +503,7 @@ INVARIANT TypeOK
 INVARIANT HistoryMatch
 ```
 
-- [ ] **Step 3: Add the model-check target to the Makefile**
+- [x] **Step 3: Add the model-check target to the Makefile**
 
 Append after the `$(TLA_TOOLS)` rule:
 
@@ -484,7 +513,7 @@ model-check: $(TLA_TOOLS)
 	  tlc2.TLC $(TLC_FLAGS) -config WalCommit.cfg WalCommit.tla
 ```
 
-- [ ] **Step 4: Run it — expect green (no crashes yet, so trivially safe)**
+- [x] **Step 4: Run it — expect green (no crashes yet, so trivially safe)**
 
 ```bash
 make model-check
@@ -492,7 +521,7 @@ make model-check
 
 Expected: `Model checking completed. No error has been found.` (roughly a few thousand states). A violation here means a transcription error in the happy path — fix before committing.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add docs/models/WalCommit.tla docs/models/WalCommit.cfg Makefile
@@ -514,7 +543,7 @@ git commit -m "R9: sector-level WAL commit model, crash-free happy path
 - Consumes: `Merge`, `Put`, `EmptyCache`, `Content`, `Recovers(d, id, o)`, `MaxCrashes`, all variables from Task 3.
 - Produces: action `Crash` (referenced in `Next` and by Task 6's mutant traces); invariant `NoTornVersionVisible` (referenced by `WalCommit.cfg` and Task 6's `BUGGY_SKIP_CHECKSUM` expectation).
 
-**Guidance for Crash** (~8 lines): guard on `crashes < MaxCrashes` and `phase = "running"`. Then: there exists a subset `keep` of `DOMAIN pending` — those writes made it to the platter, the rest evaporate. Compute the post-crash disk with `Merge(disk, [s \in keep |-> pending[s]])`. The history subtlety: if the in-flight op had reached `st = "logged"` AND `Recovers(newDisk, op.id, op.obj)` holds, the crash *committed* the op (append `op.val` to `hstore[op.obj]`) even though no ack was ever sent; otherwise the op vanishes and `hstore` is unchanged. Either way: `pending' = EmptyCache`, `phase' = "down"`, `op' = None`, `crashes' = crashes + 1`, and zero the volatile state (`mtable'` all 0, `dirty' = {}`, `walNext' = 1`) so equivalent post-crash states collapse. `acked` and `nextOp` are unchanged — an acked op stays acked forever; that is the whole point.
+**Guidance for Crash** (~8 lines): guard on `crashes < MaxCrashes` and `phase = "running"`. Then: there exists a subset `keep` of `DOMAIN pending` — those writes made it to the platter, the rest evaporate. Compute the post-crash disk with `Merge(disk, [s \in keep |-> pending[s]])`. The history subtlety: if the in-flight op had reached `st = "logged"` AND `Recovers(newDisk, op.id, op.obj)` holds, the crash *committed* the op (append `op.val` to `hstore[op.obj]`) even though no ack was ever sent; otherwise the op vanishes and `hstore` is unchanged. Either way: `pending' = EmptyCache`, `phase' = "down"`, `op' = IdleOp`, `crashes' = crashes + 1`, and zero the volatile state (`mtable'` all 0, `dirty' = {}`, `walNext' = 1`) so equivalent post-crash states collapse. `acked` and `nextOp` are unchanged — an acked op stays acked forever; that is the whole point.
 
 **Guidance for NoTornVersionVisible** (~4 lines): when `phase = "running"`, every object with a table entry (`mtable[o] # 0`) must have an intact payload: `Content(<<"data", mtable[o]>>)` equals `<<mtable[o], v>>` for some `v \in Vals`. This is the "or torn" half of the blueprint invariant — a table entry pointing at garbage is a torn version made visible.
 
@@ -553,7 +582,7 @@ git commit -m "R9: crash semantics and torn-version invariant (subset-crash mode
 ```tla
 (* ------------------------- refinement + durability ------------------------ *)
 
-AbsInflight == IF op = None THEN <<>> ELSE <<op.id, op.obj, op.val>>
+AbsInflight == IF op.st = "idle" THEN <<>> ELSE <<op.id, op.obj, op.val>>
 
 Abs == INSTANCE WalCommitAbstract
        WITH store <- hstore, acked <- acked,
@@ -576,7 +605,7 @@ DurableRecoverable ==
          \/ /\ hstore[o] # <<>>
             /\ t[o] # 0
             /\ disk[<<"data", t[o]>>] = <<t[o], Last(hstore[o])>>
-         \/ /\ op # None /\ op.st = "logged" /\ o = op.obj
+         \/ /\ op.st = "logged" /\ o = op.obj
             /\ t[o] = op.id
             /\ disk[<<"data", op.id>>] = <<op.id, op.val>>
 ```
