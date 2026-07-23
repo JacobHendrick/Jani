@@ -651,6 +651,79 @@ int object_store_put(
     return 1;
 }
 
+int object_store_get(
+    struct object_store *store,
+    struct object_id id,
+    struct object_header *header_out,
+    const uint8_t **payload_out,
+    size_t *payload_size_out
+) {
+    const struct object_table_entry *entry;
+    const struct object_header *header;
+    size_t object_byte_count;
+    size_t sector_count;
+    size_t index;
+
+    if ((store == NULL) || object_id_is_zero(id) || (header_out == NULL) ||
+        (payload_out == NULL) || (payload_size_out == NULL)) {
+        return 0;
+    }
+
+    entry = object_table_find(&store->table, id);
+    if (entry == NULL) {
+        return 0;
+    }
+
+    if (store->cache_valid && object_id_equal(store->cache_id, id) &&
+        (store->cache_version == entry->version)) {
+        object_byte_count = store->cache_size;
+    } else {
+        if ((entry->sector_count == 0) ||
+            (entry->first_sector < OBJECT_STORE_FIRST_ALLOCATABLE_SECTOR) ||
+            (entry->first_sector >= store->io.sector_count) ||
+            (entry->sector_count >
+             (store->io.sector_count - entry->first_sector)) ||
+            (entry->sector_count >
+             (store->cache_capacity / OBJECT_STORE_SECTOR_SIZE))) {
+            return 0;
+        }
+
+        sector_count = (size_t)entry->sector_count;
+        object_byte_count = sector_count * OBJECT_STORE_SECTOR_SIZE;
+
+        store->cache_valid = 0;
+        for (index = 0; index < sector_count; index++) {
+            if (!store->io.read_sector(
+                    store->io.context,
+                    entry->first_sector + index,
+                    store->cache_buffer +
+                    (index * OBJECT_STORE_SECTOR_SIZE))) {
+                return 0;
+            }
+        }
+    }
+
+    if (!object_header_validate(store->cache_buffer, object_byte_count)) {
+        return 0;
+    }
+
+    header = (const struct object_header *)store->cache_buffer;
+    if (!object_id_equal(header->id, id) ||
+        (header->version != entry->version)) {
+        return 0;
+    }
+
+    store->cache_id = id;
+    store->cache_version = entry->version;
+    store->cache_size = object_byte_count;
+    store->cache_valid = 1;
+
+    *header_out = *header;
+    *payload_out = store->cache_buffer + OBJECT_HEADER_SIZE;
+    *payload_size_out = (size_t)header->payload_size;
+    return 1;
+}
+
 int object_store_snapshot_create(
     struct object_store *store,
     uint64_t *snapshot_id_out
@@ -757,6 +830,39 @@ int object_store_snapshot_rollback(
     store->cache_valid = 0;
 
     if (!write_superblock(store) || !clear_wal(store)) {
+        return 0;
+    }
+
+    return 1;
+}
+
+int object_store_snapshot_discard(
+    struct object_store *store,
+    uint64_t snapshot_id
+) {
+    struct object_store_snapshot saved;
+    size_t slot;
+
+    if ((store == NULL) || (snapshot_id == 0)) {
+        return 0;
+    }
+
+    for (slot = 0; slot < OBJECT_STORE_SNAPSHOT_LIMIT; slot++) {
+        if (store->snapshots[slot].id == snapshot_id) {
+            break;
+        }
+    }
+    if (slot == OBJECT_STORE_SNAPSHOT_LIMIT) {
+        return 0;
+    }
+
+    saved = store->snapshots[slot];
+    store->snapshots[slot].id = 0;
+    store->snapshots[slot].table_sector = 0;
+    store->snapshots[slot].table_count = 0;
+
+    if (!write_superblock(store)) {
+        store->snapshots[slot] = saved;
         return 0;
     }
 
