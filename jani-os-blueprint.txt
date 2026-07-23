@@ -15,7 +15,7 @@ CONTENTS
   PART 2  Architecture: the design invariants everything obeys
   PART 3  Language stack and toolchain setup
   PART 4  C engineering discipline (read before writing any C)
-  PART 5  The nine phases (Phase 0 through Phase 8)
+  PART 5  The ten phases (Phase 0 through Phase 9)
   PART 6  Scale expectations and realism notes
   PART 7  Suggested project layout (for when you start coding)
 
@@ -83,6 +83,35 @@ Later-phase:
   U17 Declarative system state   - whole machine config as one versioned,
                                    reproducible object
   U18 Post-quantum crypto        - ML-KEM (Kyber) key exchange from day one
+
+Consumer-viability (added 2026-07-22; see docs/superpowers/specs/
+2026-07-22-consumer-viability-design.md):
+  U19 Powerbox authority         - components get zero authority by default;
+                                   choosing an object IS granting access to
+                                   that object; no permission dialogs anywhere
+  U20 Non-persistent compromise  - executable code is re-derived from signed
+                                   objects on every resume; only inert data
+                                   persists, so malware cannot survive a
+                                   restart even though everything else does
+  U21 Device containment         - IOMMU-enforced DMA windows; makes U5's
+                                   "a driver crash cannot hurt you" true at
+                                   the hardware level, not only in software
+  U22 WASI compatibility         - the capability engine IS the WASI
+                                   implementation; anything compiled to WASI
+                                   from Rust/Go/C/C++/Zig runs unmodified
+  U23 Out-of-band recovery       - automatic snapshots before risky
+                                   operations; bootloader-level rollback that
+                                   works when the store itself is broken
+
+CONSUMER VIABILITY IS A PROJECT GOAL, NOT AN ASPIRATION. Jani is meant to be
+run by real people on real x86_64 desktops and laptops, booted from an ISO a
+stranger can burn. That does not soften any pillar - it adds obligations the
+research-OS framing would let you skip: a driver set for standards-based PC
+hardware, an installer that probes and reports honestly before touching a
+disk, out-of-band recovery, a conventional launcher beside the intent UI, and
+a published hardware compatibility list. Everything is still written from
+scratch; the one exception is large, well-bounded, security-reviewed vendored
+libraries, the bargain already made for WAMR, crypto, and ML-KEM.
 
 CAPABILITY-BASED SECURITY is not on this list because it is not optional: it
 is the substrate. Pillars 2, 4, 5 and upgrades U5, U6, U11, U13 all depend on
@@ -544,15 +573,32 @@ THE RULES
 
 
 ================================================================================
-PART 5 - THE NINE PHASES
+PART 5 - THE TEN PHASES
 ================================================================================
 
 Ordering rationale: persistence is the foundation (Phase 2), the WASM layer
 makes it programmable (Phase 3), capabilities/scheduling make it safe and
 observable (Phase 4), then the OS grows outward: distribution (5), meaning
-(6), hardening (7), interface (8). Phases 0-1 are the unavoidable bare-metal
-on-ramp. Do not reorder: each phase's milestone is the test harness for the
-next.
+(6), hardening (7), interface (8), and finally real hardware and real users
+(9). Phases 0-1 are the unavoidable bare-metal on-ramp. Do not reorder: each
+phase's milestone is the test harness for the next.
+
+HARDWARE-HONEST QEMU (added 2026-07-22): from Phase 4 onward, QEMU is invoked
+with emulated REAL device models, not virtio alone:
+
+    -device nvme,drive=d0    real NVMe spec - the same driver later drives
+                             a physical SSD
+    -device qemu-xhci        real USB 3 - keyboards, mice, storage, dongles
+    -device e1000e           real Intel NIC
+    -device ich9-ahci        SATA
+
+virtio stays as the fast path for hosted tests and quick iteration; it stops
+being the only backend. This exists to kill a specific risk: building six
+phases in a comfortable virtio world and only meeting real hardware at the
+end, by which time architectural assumptions have gone untested for years.
+QEMU implements the actual specs, so real drivers can be written with gdb
+attached and printk working. Phase 9 then shrinks from "write every driver"
+to "debug the drivers you already have."
 
 --------------------------------------------------------------------------------
 PHASE 0 - BARE-METAL ON-RAMP                          (~1,500-3,000 lines C)
@@ -1059,6 +1105,82 @@ intent-driven software; Oberon system documentation (the original
 "the system IS the interface" OS - closest historical ancestor to
 app-less computing).
 
+--------------------------------------------------------------------------------
+PHASE 9 - REAL HARDWARE AND REAL USERS               (~18,000-29,000 lines C
+                                                      + Zig)
+--------------------------------------------------------------------------------
+GOAL: An ISO a stranger can burn and boot on their own x86_64 desktop or
+laptop. This is the phase that turns a research system into something people
+use. Lands: U19-U23, and the consumer-viability obligations from Part 1.
+
+DESIGN (full detail in docs/superpowers/specs/2026-07-22-consumer-viability-
+design.md - read it before starting):
+
+  - THE DRIVER SET. Most PC hardware speaks standards, so a finite list
+    covers a lot of machines: NVMe (~1k, every modern SSD), XHCI + USB HID
+    (~4k, every USB keyboard/mouse/drive/dongle), PCIe enumeration (~500),
+    e1000e + RTL8169 (~2.5k, most desktop ethernet), AHCI (~1k, SATA), an
+    ACPI subset for shutdown/reboot/IRQ routing (~2k), IOMMU (~1.5-2.5k),
+    and the UEFI framebuffer you already get from Limine. Most of these are
+    written back in Phase 4 against QEMU's emulated real devices; Phase 9 is
+    where they meet firmware quirks, real ACPI tables, and timing.
+  - TWO-TIER DRIVERS. U5 says drivers are sandboxed components, but the WASM
+    runtime does not exist until Phase 3 and the store must read from disk
+    before that. So: a minimal in-kernel BOOT DRIVER (NVMe + AHCI, read-
+    mostly, a few hundred lines, no hotplug, no async, no recovery, small
+    enough to audit line by line, never restarts), and a full-featured
+    driver as a restartable WASM component. Boot drivers exist only to reach
+    the point where real drivers can run.
+  - IOMMU IS NOT OPTIONAL (U21). A WASM sandbox constrains what driver CODE
+    touches; it does not constrain what the DEVICE touches. Drivers hand
+    devices physical addresses and the device performs the DMA - a driver
+    inside a perfect sandbox can still program its device to write over
+    kernel memory. VT-d/AMD-Vi is the only thing that extends capability
+    enforcement below the software layer. It is present on essentially all
+    x86_64 silicon since ~2015 but frequently disabled in firmware, so the
+    installer must detect it and SAY SO PLAINLY. With it off, a headline
+    security property silently is not there; do not pretend otherwise.
+  - THE INSTALLER (~2-4k). The first impression, and OS projects forget it.
+    Probe BEFORE committing (CPU, IOMMU present and enabled, UEFI mode,
+    storage controller, NIC); report honestly before touching the disk
+    ("your wifi chip is unsupported; ethernet or a USB dongle will work -
+    continue?"); format the store; generate the user identity keypair (U8);
+    install the bootloader and the recovery entry. Ship a PRE-FLIGHT CHECKER
+    that runs on Windows or Linux so someone learns whether their PC works
+    before burning an ISO.
+  - OUT-OF-BAND RECOVERY (U23). Orthogonal persistence breaks "turn it off
+    and on again" - the notebook remembers the broken thing too. This is the
+    single highest-risk consumer failure mode in the whole design and it
+    contributed to Phantom OS's usability problems. Automatic snapshots
+    before every risky operation (update, install, driver change - never
+    user-initiated, users do not snapshot in time); a bootloader entry that
+    boots directly to a chosen snapshot before the store is mounted; and a
+    recovery path that does NOT depend on the running system. NOTE THE PHASE
+    2 CONSTRAINT: snapshot rollback's on-disk form must be simple enough for
+    a few hundred lines of boot-time C to execute without the component
+    system, the runtime, or a mounted table. Otherwise you have built a
+    recovery system that only works when you do not need it.
+  - THE HARDWARE COMPATIBILITY LIST. Three tiers: Verified (you own it, you
+    test it), Expected (standards-only hardware), Unsupported.
+
+DELIBERATELY OUT OF SCOPE, STATED PLAINLY: wifi has no standard, every chip
+needs vendor firmware blobs, and Linux's iwlwifi alone is ~50k lines - the
+near-term answer is USB ethernet or one supported chip. GPU acceleration has
+no standard and is enormous - use software compositing on the framebuffer,
+which a modern CPU handles fine at 1080p. That means no 3D and no hardware
+video decode. Put both in the HCL rather than letting users discover them.
+
+MILESTONE DEMO: hand someone an ISO. They burn it, boot their own PC, the
+installer tells them the truth about their hardware, they install, and they
+use it. Then break the system deliberately - a bad update - and recover it
+from the bootloader without a working store.
+
+READING: NVMe base specification (surprisingly readable, one spec covers
+every SSD); xHCI specification; Intel VT-d and AMD-Vi specifications; ACPI
+specification (subset only - do not read it all); OSDev wiki pages for each
+device; the Asahi Linux project's writeups on bringing up an OS on hardware
+you do not control the documentation for.
+
 
 ================================================================================
 PART 6 - SCALE EXPECTATIONS AND REALISM NOTES
@@ -1069,14 +1191,23 @@ HAND-WRITTEN CORE CODE PER PHASE (rough, honest ranges)
   Phase 0  On-ramp            1,500 -  3,000
   Phase 1  Memory             2,000 -  4,000
   Phase 2  Object store       4,000 -  8,000
-  Phase 3  WASM layer         2,000 -  4,000   (+ WAMR ~50k vendored)
-  Phase 4  Caps/sched/replay  3,000 -  6,000
+  Phase 3  WASM layer + WASI  4,000 -  8,000   (+ WAMR ~50k vendored)
+  Phase 4  Caps/sched/replay  5,000 -  9,000   (incl. signing + U20 resume
+                                                verification)
   Phase 5  Distribution       4,000 -  8,000   (+ crypto ~3k vendored)
   Phase 6  Semantic           3,000 -  5,000   (+ inference vendored)
   Phase 7  Zero-trust         2,000 -  4,000   (+ ML-KEM ~3k vendored)
-  Phase 8  Intent UI          4,000 -  8,000
+  Phase 8  Intent UI + web    7,000 - 14,000   (+ browser ~500k vendored)
+  Phase 9  Hardware + users  16,000 - 25,000
   ------------------------------------------------
-  TOTAL                     ~25,000 - 50,000 lines of your C and Zig
+  TOTAL                     ~48,000 - 88,000 lines of your C and Zig
+
+THE CONSUMER TARGET ROUGHLY DOUBLES THIS PROJECT. The research-OS version of
+Jani was ~25,000-50,000 lines. Shipping to real people on real hardware adds
+drivers, an installer, recovery, signing, a WASI shim, and a browser port -
+call it another 23,000-38,000 lines of first-party code. That number is
+recorded here so it is a decision rather than a discovery. Nothing about the
+pillars changed; the obligations did.
 
 Those estimates describe the C-heavy kernel and vendored native core, not
 the growing application ecosystem. The kernel trunk remains majority C,
@@ -1088,12 +1219,16 @@ CALIBRATION: xv6, a complete teaching Unix, is ~6k lines. Redox's kernel is
 ~30k. Linux is ~30 million. This project sits squarely in serious-research-
 OS territory - which is exactly why the phase structure exists: every few
 thousand lines produces a demo you can show and a foundation the next phase
-stands on.
+stands on. With Phase 9 the honest comparison shifts from "research OS" to
+"research OS that also ships": Fuchsia, Redox, and Twizzler are the peer
+group, and none of them reached consumers on a solo budget.
 
 TIME REALISM (solo, learning as you go): Phase 0-1 are commonly a few months
 of evenings. Phase 2 is the longest-feeling phase (crash consistency is
 subtle) - the hosted-first rule R3 is what makes it survivable. Phase 3
-delivers the payoff demo that will recharge you. Expect the full arc to be
+delivers the payoff demo that will recharge you. Phase 9 is the longest
+phase outright: driver work is unglamorous, hardware lies, and firmware
+quirks cannot be reasoned about, only discovered. Expect the full arc to be
 a multi-year companion project. That is normal and fine: Linux was "just a
 hobby, won't be big and professional" for years too.
 

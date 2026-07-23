@@ -36,7 +36,7 @@ is planned; components previously assigned to Odin will be written in Zig.
 ## Where everything is
 
 - **`jani-os-blueprint.txt`** — the complete blueprint: architecture, all
-  nine phases, milestones, reading lists. This is the map for the whole
+  ten phases, milestones, reading lists. This is the map for the whole
   project. Read Part 2 (architecture) and Part 4 (C discipline) before
   writing anything.
 - **`START-HERE.txt`** — the concrete first-session checklist for Phase 0.
@@ -45,10 +45,17 @@ is planned; components previously assigned to Odin will be written in Zig.
 - Directory layout follows Part 7 of the blueprint and grows one phase at a
   time. Phase 0's boot, architecture, driver, and kernel-library code is live.
 
+## Verification Commands
+
+- `make test` — run hosted PMM and heap tests under ASan/UBSan
+- `make fuzz-heap` — run the bounded randomized heap fuzz campaign
+- `make model-check` — prove the current WAL model satisfies its invariants
+- `make model-check-negative` — prove TLC breaks all seeded protocol mutants
+
 ## Status
 
 - [x] Phase 0 — bare-metal on-ramp (boot, print, interrupts)
-- [ ] Phase 1 — memory & the single address space
+- [x] Phase 1 — memory & the single address space
 - [ ] Phase 2 — persistent object store
 - [ ] Phase 3 — WASM runtime as userspace  ← the "wow" demo lives here
 - [ ] Phase 4 — capabilities, scheduler, replay, hot-swap
@@ -56,3 +63,4 @@ is planned; components previously assigned to Odin will be written in Zig.
 - [ ] Phase 6 — semantic layer
 - [ ] Phase 7 — zero-trust hardening
 - [ ] Phase 8 — intent UI
+- [ ] Phase 9 — real hardware & real users  ← the consumer milestone
