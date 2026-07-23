@@ -11,6 +11,8 @@ QEMU_FLAGS := -cpu qemu64,-apic
 HOST_CC := clang
 HOST_CFLAGS := -Wall -Wextra -Werror -g -O1 \
 	-fsanitize=address,undefined -fno-omit-frame-pointer
+FUZZ_CFLAGS := $(HOST_CFLAGS) -fsanitize=fuzzer
+FUZZ_RUNS ?= 10000
 
 BUILD_DIR := build
 ISO_ROOT := $(BUILD_DIR)/iso_root
@@ -32,10 +34,18 @@ MEMORY_MAP_OBJ := $(BUILD_DIR)/memory_map.o
 LAYOUT_OBJ := $(BUILD_DIR)/layout.o
 PMM_OBJ := $(BUILD_DIR)/pmm.o
 VMM_OBJ := $(BUILD_DIR)/vmm.o
+HEAP_OBJ := $(BUILD_DIR)/heap.o
+FREE_LIST_OBJ := $(BUILD_DIR)/free_list.o
+HEAP_BACKEND_OBJ := $(BUILD_DIR)/heap_backend.o
+OBJECT_ID_OBJ := $(BUILD_DIR)/object_id.o
+OBJECT_TABLE_OBJ := $(BUILD_DIR)/object_table.o
+OBJECT_HEADER_VALIDATE_OBJ := $(BUILD_DIR)/object_header_validate.o
+WAL_VALIDATE_OBJ := $(BUILD_DIR)/wal_validate.o
+OBJECT_STORE_OBJ := $(BUILD_DIR)/object_store.o
 SERIAL_OBJ := $(BUILD_DIR)/serial.o
 PRINTK_OBJ := $(BUILD_DIR)/printk.o
 STRING_OBJ := $(BUILD_DIR)/string.o
-KERNEL_OBJECTS := $(MAIN_OBJ) $(GDT_OBJ) $(IDT_OBJ) $(ISR_OBJ) $(INTERRUPTS_OBJ) $(PIC_OBJ) $(PIT_OBJ) $(KEYBOARD_OBJ) $(MEMORY_MAP_OBJ) $(LAYOUT_OBJ) $(PMM_OBJ) $(VMM_OBJ) $(SERIAL_OBJ) $(PRINTK_OBJ) $(STRING_OBJ)
+KERNEL_OBJECTS := $(MAIN_OBJ) $(GDT_OBJ) $(IDT_OBJ) $(ISR_OBJ) $(INTERRUPTS_OBJ) $(PIC_OBJ) $(PIT_OBJ) $(KEYBOARD_OBJ) $(MEMORY_MAP_OBJ) $(LAYOUT_OBJ) $(PMM_OBJ) $(VMM_OBJ) $(HEAP_OBJ) $(FREE_LIST_OBJ) $(HEAP_BACKEND_OBJ) $(OBJECT_ID_OBJ) $(OBJECT_TABLE_OBJ) $(OBJECT_HEADER_VALIDATE_OBJ) $(WAL_VALIDATE_OBJ) $(OBJECT_STORE_OBJ) $(SERIAL_OBJ) $(PRINTK_OBJ) $(STRING_OBJ)
 
 KERNEL_SOURCE := kernel/boot/main.c
 GDT_SOURCE := kernel/arch/gdt.c
@@ -49,6 +59,14 @@ MEMORY_MAP_SOURCE := kernel/mm/memory_map.c
 LAYOUT_SOURCE := kernel/mm/layout.c
 PMM_SOURCE := kernel/mm/pmm.c
 VMM_SOURCE := kernel/mm/vmm.c
+HEAP_SOURCE := kernel/mm/heap.c
+FREE_LIST_SOURCE := kernel/mm/free_list.c
+HEAP_BACKEND_SOURCE := kernel/mm/heap_backend.c
+OBJECT_ID_SOURCE := kernel/obj/object_id.c
+OBJECT_TABLE_SOURCE := kernel/obj/object_table.c
+OBJECT_HEADER_VALIDATE_SOURCE := kernel/obj/object_header_validate.zig
+WAL_VALIDATE_SOURCE := kernel/obj/wal_validate.zig
+OBJECT_STORE_SOURCE := kernel/obj/object_store.c
 SERIAL_SOURCE := kernel/drivers/serial.c
 PRINTK_SOURCE := kernel/lib/printk.c
 STRING_SOURCE := kernel/lib/string.c
@@ -74,8 +92,18 @@ LDFLAGS := -T $(LINKER_SCRIPT)
 
 HOSTED_DIR := tools/hosted
 TEST_PMM_BIN := $(BUILD_DIR)/test_pmm
+TEST_HEAP_BIN := $(BUILD_DIR)/test_heap
+TEST_OBJECT_TABLE_BIN := $(BUILD_DIR)/test_object_table
+TEST_OBJECT_HEADER_BIN := $(BUILD_DIR)/test_object_header
+TEST_WAL_BIN := $(BUILD_DIR)/test_wal
+TEST_OBJECT_STORE_BIN := $(BUILD_DIR)/test_object_store
+OBJECT_HEADER_VALIDATE_HOSTED_OBJ := $(BUILD_DIR)/object_header_validate_hosted.o
+WAL_VALIDATE_HOSTED_OBJ := $(BUILD_DIR)/wal_validate_hosted.o
+FUZZ_HEAP_BIN := $(BUILD_DIR)/fuzz_heap
+FUZZ_OBJECT_STORE_BIN := $(BUILD_DIR)/fuzz_object_store
 
-.PHONY: all check-tools kernel iso run run-debug test clean
+.PHONY: all check-tools kernel iso run run-debug test fuzz-heap \
+	fuzz-object-store model-check model-check-negative clean
 
 all: iso
 
@@ -134,6 +162,38 @@ $(VMM_OBJ): $(VMM_SOURCE) Makefile
 	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
 	$(ZIG_ENV) $(CC) $(CFLAGS) -c $(VMM_SOURCE) -o $(VMM_OBJ)
 
+$(HEAP_OBJ): $(HEAP_SOURCE) Makefile
+	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(CC) $(CFLAGS) -c $(HEAP_SOURCE) -o $(HEAP_OBJ)
+
+$(FREE_LIST_OBJ): $(FREE_LIST_SOURCE) Makefile
+	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(CC) $(CFLAGS) -c $(FREE_LIST_SOURCE) -o $(FREE_LIST_OBJ)
+
+$(HEAP_BACKEND_OBJ): $(HEAP_BACKEND_SOURCE) Makefile
+	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(CC) $(CFLAGS) -c $(HEAP_BACKEND_SOURCE) -o $(HEAP_BACKEND_OBJ)
+
+$(OBJECT_ID_OBJ): $(OBJECT_ID_SOURCE) Makefile
+	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(CC) $(CFLAGS) -c $(OBJECT_ID_SOURCE) -o $(OBJECT_ID_OBJ)
+
+$(OBJECT_TABLE_OBJ): $(OBJECT_TABLE_SOURCE) Makefile
+	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(CC) $(CFLAGS) -c $(OBJECT_TABLE_SOURCE) -o $(OBJECT_TABLE_OBJ)
+
+$(OBJECT_HEADER_VALIDATE_OBJ): $(OBJECT_HEADER_VALIDATE_SOURCE) Makefile
+	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(ZIG) build-obj -target x86_64-freestanding-none -O Debug $(OBJECT_HEADER_VALIDATE_SOURCE) -femit-bin=$(OBJECT_HEADER_VALIDATE_OBJ)
+
+$(WAL_VALIDATE_OBJ): $(WAL_VALIDATE_SOURCE) Makefile
+	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(ZIG) build-obj -target x86_64-freestanding-none -O Debug $(WAL_VALIDATE_SOURCE) -femit-bin=$(WAL_VALIDATE_OBJ)
+
+$(OBJECT_STORE_OBJ): $(OBJECT_STORE_SOURCE) Makefile
+	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(CC) $(CFLAGS) -c $(OBJECT_STORE_SOURCE) -o $(OBJECT_STORE_OBJ)
+
 $(SERIAL_OBJ): $(SERIAL_SOURCE) Makefile
 	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
 	$(ZIG_ENV) $(CC) $(CFLAGS) -c $(SERIAL_SOURCE) -o $(SERIAL_OBJ)
@@ -177,12 +237,61 @@ $(ISO_IMAGE): $(KERNEL_ELF) $(LIMINE_CONFIG)
 		-o $(ISO_IMAGE)
 	$(LIMINE_DIR)/limine bios-install $(ISO_IMAGE)
 
-test: $(TEST_PMM_BIN)
+test: $(TEST_PMM_BIN) $(TEST_HEAP_BIN) $(TEST_OBJECT_TABLE_BIN) $(TEST_OBJECT_HEADER_BIN) $(TEST_WAL_BIN) $(TEST_OBJECT_STORE_BIN)
 	$(TEST_PMM_BIN)
+	$(TEST_HEAP_BIN)
+	$(TEST_OBJECT_TABLE_BIN)
+	$(TEST_OBJECT_HEADER_BIN)
+	$(TEST_WAL_BIN)
+	$(TEST_OBJECT_STORE_BIN)
 
 $(TEST_PMM_BIN): $(PMM_SOURCE) $(HOSTED_DIR)/test_pmm.c $(HOSTED_DIR)/stubs.c $(HOSTED_DIR)/fake_memory_map.c $(HOSTED_DIR)/fake_memory_map.h $(HOSTED_DIR)/check.h Makefile
 	mkdir -p $(BUILD_DIR)
 	$(HOST_CC) $(HOST_CFLAGS) $(PMM_SOURCE) $(HOSTED_DIR)/stubs.c $(HOSTED_DIR)/fake_memory_map.c $(HOSTED_DIR)/test_pmm.c -o $(TEST_PMM_BIN)
+
+$(TEST_HEAP_BIN): $(HEAP_SOURCE) $(FREE_LIST_SOURCE) $(HOSTED_DIR)/heap_backend_hosted.c $(HOSTED_DIR)/hosted_heap.h $(HOSTED_DIR)/test_heap.c $(HOSTED_DIR)/check.h Makefile
+	mkdir -p $(BUILD_DIR)
+	$(HOST_CC) $(HOST_CFLAGS) $(HEAP_SOURCE) $(FREE_LIST_SOURCE) $(HOSTED_DIR)/heap_backend_hosted.c $(HOSTED_DIR)/test_heap.c -o $(TEST_HEAP_BIN)
+
+$(TEST_OBJECT_TABLE_BIN): $(OBJECT_ID_SOURCE) $(OBJECT_TABLE_SOURCE) $(HOSTED_DIR)/test_object_table.c $(HOSTED_DIR)/check.h Makefile
+	mkdir -p $(BUILD_DIR)
+	$(HOST_CC) $(HOST_CFLAGS) $(OBJECT_ID_SOURCE) $(OBJECT_TABLE_SOURCE) $(HOSTED_DIR)/test_object_table.c -o $(TEST_OBJECT_TABLE_BIN)
+
+$(OBJECT_HEADER_VALIDATE_HOSTED_OBJ): $(OBJECT_HEADER_VALIDATE_SOURCE) Makefile
+	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(ZIG) build-obj -O Debug $(OBJECT_HEADER_VALIDATE_SOURCE) -femit-bin=$(OBJECT_HEADER_VALIDATE_HOSTED_OBJ)
+
+$(TEST_OBJECT_HEADER_BIN): $(OBJECT_HEADER_VALIDATE_HOSTED_OBJ) $(HOSTED_DIR)/test_object_header.c $(HOSTED_DIR)/check.h Makefile
+	mkdir -p $(BUILD_DIR)
+	$(HOST_CC) $(HOST_CFLAGS) $(HOSTED_DIR)/test_object_header.c $(OBJECT_HEADER_VALIDATE_HOSTED_OBJ) -o $(TEST_OBJECT_HEADER_BIN)
+
+$(WAL_VALIDATE_HOSTED_OBJ): $(WAL_VALIDATE_SOURCE) Makefile
+	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(ZIG) build-obj -O Debug $(WAL_VALIDATE_SOURCE) -femit-bin=$(WAL_VALIDATE_HOSTED_OBJ)
+
+$(TEST_WAL_BIN): $(OBJECT_HEADER_VALIDATE_HOSTED_OBJ) $(WAL_VALIDATE_HOSTED_OBJ) $(HOSTED_DIR)/test_wal.c $(HOSTED_DIR)/check.h Makefile
+	mkdir -p $(BUILD_DIR)
+	$(HOST_CC) $(HOST_CFLAGS) $(HOSTED_DIR)/test_wal.c $(OBJECT_HEADER_VALIDATE_HOSTED_OBJ) $(WAL_VALIDATE_HOSTED_OBJ) -o $(TEST_WAL_BIN)
+
+$(TEST_OBJECT_STORE_BIN): $(OBJECT_ID_SOURCE) $(OBJECT_TABLE_SOURCE) $(OBJECT_STORE_SOURCE) $(OBJECT_HEADER_VALIDATE_HOSTED_OBJ) $(WAL_VALIDATE_HOSTED_OBJ) $(HOSTED_DIR)/test_object_store.c $(HOSTED_DIR)/check.h Makefile
+	mkdir -p $(BUILD_DIR)
+	$(HOST_CC) $(HOST_CFLAGS) $(OBJECT_ID_SOURCE) $(OBJECT_TABLE_SOURCE) $(OBJECT_STORE_SOURCE) $(HOSTED_DIR)/test_object_store.c $(OBJECT_HEADER_VALIDATE_HOSTED_OBJ) $(WAL_VALIDATE_HOSTED_OBJ) -o $(TEST_OBJECT_STORE_BIN)
+
+$(FUZZ_HEAP_BIN): $(HEAP_SOURCE) $(FREE_LIST_SOURCE) $(HOSTED_DIR)/heap_backend_hosted.c $(HOSTED_DIR)/hosted_heap.h $(HOSTED_DIR)/fuzz_heap.c Makefile
+	mkdir -p $(BUILD_DIR)
+	$(HOST_CC) $(FUZZ_CFLAGS) $(HEAP_SOURCE) $(FREE_LIST_SOURCE) $(HOSTED_DIR)/heap_backend_hosted.c $(HOSTED_DIR)/fuzz_heap.c -o $(FUZZ_HEAP_BIN)
+
+fuzz-heap: $(FUZZ_HEAP_BIN)
+	mkdir -p $(BUILD_DIR)/fuzz-corpus
+	$(FUZZ_HEAP_BIN) $(BUILD_DIR)/fuzz-corpus -runs=$(FUZZ_RUNS) -max_len=4096 -timeout=5
+
+$(FUZZ_OBJECT_STORE_BIN): $(OBJECT_ID_SOURCE) $(OBJECT_TABLE_SOURCE) $(OBJECT_STORE_SOURCE) $(OBJECT_HEADER_VALIDATE_HOSTED_OBJ) $(WAL_VALIDATE_HOSTED_OBJ) $(HOSTED_DIR)/fuzz_object_store.c Makefile
+	mkdir -p $(BUILD_DIR)
+	$(HOST_CC) $(FUZZ_CFLAGS) $(OBJECT_ID_SOURCE) $(OBJECT_TABLE_SOURCE) $(OBJECT_STORE_SOURCE) $(HOSTED_DIR)/fuzz_object_store.c $(OBJECT_HEADER_VALIDATE_HOSTED_OBJ) $(WAL_VALIDATE_HOSTED_OBJ) -o $(FUZZ_OBJECT_STORE_BIN)
+
+fuzz-object-store: $(FUZZ_OBJECT_STORE_BIN)
+	mkdir -p $(BUILD_DIR)/fuzz-corpus-store
+	$(FUZZ_OBJECT_STORE_BIN) $(BUILD_DIR)/fuzz-corpus-store -runs=$(FUZZ_RUNS) -max_len=4096 -timeout=5
 
 run: $(ISO_IMAGE)
 	$(QEMU) $(QEMU_FLAGS) -cdrom $(ISO_IMAGE) -serial stdio
@@ -198,6 +307,8 @@ TLA_TOOLS := third_party/tla2tools.jar
 TLA_TOOLS_URL := https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar
 TLA_TOOLS_SHA256 := 936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88
 TLC_FLAGS := -workers auto -deadlock -cleanup
+BUG_CFGS := WalCommitBugNoFlush WalCommitBugTruncateFirst \
+	WalCommitBugSkipChecksum
 
 # The pinned sha256 is trust-on-first-use: hashed from the official
 # github.com/tlaplus release download on 2026-07-15 (upstream publishes no
@@ -214,3 +325,18 @@ $(TLA_TOOLS):
 model-check: $(TLA_TOOLS)
 	cd docs/models && java -XX:+UseParallelGC -cp $(abspath $(TLA_TOOLS)) \
 	  tlc2.TLC $(TLC_FLAGS) -config WalCommit.cfg WalCommit.tla
+
+model-check-negative: $(TLA_TOOLS)
+	@set -e; for cfg in $(BUG_CFGS); do \
+	  echo "== $$cfg: expecting TLC to find a violation =="; \
+	  out=$$(cd docs/models && java -XX:+UseParallelGC \
+	    -cp $(abspath $(TLA_TOOLS)) tlc2.TLC $(TLC_FLAGS) \
+	    -config $$cfg.cfg WalCommit.tla 2>&1 || true); \
+	  if printf '%s\n' "$$out" | \
+	       grep -Eq "is violated|Temporal properties were violated"; then \
+	    echo "   ok: violation found"; \
+	  else \
+	    printf '%s\n' "$$out" | tail -20; \
+	    echo "MODEL TOO WEAK: $$cfg produced no violation"; exit 1; \
+	  fi; \
+	done
