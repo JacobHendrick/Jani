@@ -15,7 +15,7 @@ CONTENTS
   PART 2  Architecture: the design invariants everything obeys
   PART 3  Language stack and toolchain setup
   PART 4  C engineering discipline (read before writing any C)
-  PART 5  The ten phases (Phase 0 through Phase 9)
+  PART 5  The eleven phases (Phase 0 through Phase 10)
   PART 6  Scale expectations and realism notes
   PART 7  Suggested project layout (for when you start coding)
 
@@ -102,6 +102,13 @@ Consumer-viability (added 2026-07-22; see docs/superpowers/specs/
   U23 Out-of-band recovery       - automatic snapshots before risky
                                    operations; bootloader-level rollback that
                                    works when the store itself is broken
+  U24 Linux ABI compatibility    - implement the Linux x86_64 syscall
+                                   interface as a capability-scoped
+                                   personality; Chromium, Firefox, and
+                                   wpa_supplicant run unmodified. An
+                                   interface is not an implementation -
+                                   every line is still yours, as with WSL1,
+                                   gVisor, Linuxulator, Starnix, Asterinas
 
 CONSUMER VIABILITY IS A PROJECT GOAL, NOT AN ASPIRATION. Jani is meant to be
 run by real people on real x86_64 desktops and laptops, booted from an ISO a
@@ -573,15 +580,21 @@ THE RULES
 
 
 ================================================================================
-PART 5 - THE TEN PHASES
+PART 5 - THE ELEVEN PHASES
 ================================================================================
 
 Ordering rationale: persistence is the foundation (Phase 2), the WASM layer
 makes it programmable (Phase 3), capabilities/scheduling make it safe and
 observable (Phase 4), then the OS grows outward: distribution (5), meaning
-(6), hardening (7), interface (8), and finally real hardware and real users
-(9). Phases 0-1 are the unavoidable bare-metal on-ramp. Do not reorder: each
-phase's milestone is the test harness for the next.
+(6), hardening (7), interface (8), the existing software ecosystem (9), and
+finally real hardware and real users (10). Phases 0-1 are the unavoidable
+bare-metal on-ramp. Do not reorder: each phase's milestone is the test
+harness for the next.
+
+Phase 9 precedes Phase 10 deliberately. The Linux ABI layer is pure software
+and fully testable in QEMU, and it hands Phase 10 two things it would
+otherwise have to build: a real browser to test the desktop against, and
+wpa_supplicant, which removes the need to hand-write the WPA handshake.
 
 HARDWARE-HONEST QEMU (added 2026-07-22): from Phase 4 onward, QEMU is invoked
 with emulated REAL device models, not virtio alone:
@@ -597,7 +610,7 @@ being the only backend. This exists to kill a specific risk: building six
 phases in a comfortable virtio world and only meeting real hardware at the
 end, by which time architectural assumptions have gone untested for years.
 QEMU implements the actual specs, so real drivers can be written with gdb
-attached and printk working. Phase 9 then shrinks from "write every driver"
+attached and printk working. Phase 10 then shrinks from "write every driver"
 to "debug the drivers you already have."
 
 --------------------------------------------------------------------------------
@@ -1106,7 +1119,71 @@ intent-driven software; Oberon system documentation (the original
 app-less computing).
 
 --------------------------------------------------------------------------------
-PHASE 9 - REAL HARDWARE AND REAL USERS               (~18,000-29,000 lines C
+PHASE 9 - LINUX COMPATIBILITY AND THE APP ECOSYSTEM  (~30,000-60,000 lines C
+                                                      + Zig)
+--------------------------------------------------------------------------------
+GOAL: Unmodified Linux binaries run on Jani. Chromium and Firefox work. This
+is how the OS inherits an application ecosystem instead of waiting for one.
+Lands: U24, and the "Chromium connected to it" requirement.
+
+THE IDEA IN ONE PARAGRAPH: a compiled Linux program cannot tell what kernel
+it is talking to. On x86_64 it puts a syscall number in RAX, arguments in
+RDI/RSI/RDX/R10/R8/R9, executes the `syscall` instruction, and reads a result
+back out of RAX. That ritual - about 350 numbered calls - is the entire
+interface. Answer those numbers the way Linux does, load ELF binaries, and
+Chromium runs. It has nothing to notice. AN INTERFACE IS NOT AN
+IMPLEMENTATION: every line is still yours. WSL1 did this on the NT kernel,
+gVisor does it in Go, FreeBSD does it in the Linuxulator, Fuchsia does it in
+Starnix, Asterinas does it in Rust. None of them contain Linux.
+
+BUILD, IN ORDER:
+  1. ELF64 loader and process setup - stack layout, auxv, TLS.
+  2. The core syscall set. About 100 of the 350 carry most software; start
+     there and chase what real programs break on. The difficulty is never
+     the count - it is the semantics: exact error codes, how signals
+     interrupt a blocked read, fork/exec corner cases, mmap overlap rules,
+     futex for threading, epoll edge-vs-level. Much of it is undocumented
+     behavior that real programs nonetheless depend on.
+  3. A synthetic filesystem view - /proc, /sys, /dev backed by the object
+     store rather than by real directories.
+  4. The personality boundary (see below), then a shell, then busybox, then
+     Chromium.
+
+THE PERSONALITY IS A CAPABILITY-SCOPED COMPONENT. The Linux ABI assumes
+paths, uid/gid, file descriptors, and ambient authority - exactly what Jani
+deleted to make U19's powerbox work. Do not punch a hole in the capability
+model to accommodate it. Instead the whole Linux world is ONE COMPONENT
+holding capabilities: inside, processes see a normal POSIX world with a
+synthetic filesystem; from outside, that world's total authority is what you
+handed it. Ambient authority exists, but ambient WITHIN A SCOPED BOX. This is
+U13's ephemeral-world primitive generalized. Fuchsia proves it composes -
+Starnix processes are ordinary capability-system components, so Linux
+compatibility did not cost Fuchsia its capability model.
+
+THREE APP TIERS RESULT: native WASM components, WASI binaries, and Linux
+binaries. Native components remain the intended way to write FOR Jani; the
+Linux tier is how Jani inherits software that already exists. Do not let the
+Linux tier become the default - it is the compatibility path, not the future.
+
+OPEN DESIGN QUESTION YOU MUST ANSWER HERE: Linux binaries are not signed Jani
+component objects, so U20's "code is re-derived from signed objects on every
+resume" does not extend into the personality as written. Either sign the
+personality's root image as one object, rebuild it from a declaration on
+every boot (U17), or accept conventional persistence inside the Linux tier
+and confine it accordingly. This is where malware-non-persistence and the app
+ecosystem collide; decide it deliberately.
+
+MILESTONE DEMO: Chromium renders a real website on Jani. Then show it holds
+no capability it was not handed - it cannot see an object you did not give
+it, and a renderer compromise has nothing to escalate with.
+
+READING: the Linux syscall table and man section 2; gVisor's design docs (the
+clearest published explanation of reimplementing the Linux ABI); Fuchsia's
+Starnix documentation; the Asterinas papers; the ELF and System V x86_64 ABI
+specifications.
+
+--------------------------------------------------------------------------------
+PHASE 10 - REAL HARDWARE AND REAL USERS              (~41,000-63,000 lines C
                                                       + Zig)
 --------------------------------------------------------------------------------
 GOAL: An ISO a stranger can burn and boot on their own x86_64 desktop or
@@ -1160,15 +1237,36 @@ design.md - read it before starting):
     a few hundred lines of boot-time C to execute without the component
     system, the runtime, or a mounted table. Otherwise you have built a
     recovery system that only works when you do not need it.
+  - WIFI (~25-38k, the single largest item in this phase). A laptop OS
+    without wifi is not a laptop OS. Split it the way Linux does: the KERNEL
+    owns the chip driver and the 802.11 MAC (scan, associate, encrypt
+    frames); USERSPACE owns the WPA handshake and key management. Because
+    Phase 9 gave you the Linux ABI, that userspace half is the real
+    wpa_supplicant, running unmodified over an nl80211-shaped interface. DO
+    NOT HAND-WRITE THE WPA HANDSHAKE. It is ~8-10k lines of exactly the code
+    where a subtle bug destroys the security property while everything still
+    appears to work; inherit a decade of scrutiny instead.
+      Stage 1 - a USB dongle: one driver serving every machine, desktop or
+      laptop, riding the XHCI stack you already built for keyboards. Target
+      ath9k_htc (Atheros AR9271/AR7010) - the only wifi hardware with
+      genuinely open-source firmware, so no vendor blob and no
+      redistribution licensing question. 802.11n and mostly 2.4GHz, so slow
+      by current standards, but it works and it unblocks the milestone.
+      Stage 2 - built-in PCIe: Intel AX200/AX210 (iwlwifi), covering most
+      laptops built since 2019. Needs a vendor firmware blob; Linux answers
+      the distribution question with linux-firmware and you would too.
+      Start with WPA2-PSK only: no enterprise EAP, no mesh, no AP mode, no
+      power management. WPA3/SAE once the stack is stable.
   - THE HARDWARE COMPATIBILITY LIST. Three tiers: Verified (you own it, you
     test it), Expected (standards-only hardware), Unsupported.
 
-DELIBERATELY OUT OF SCOPE, STATED PLAINLY: wifi has no standard, every chip
-needs vendor firmware blobs, and Linux's iwlwifi alone is ~50k lines - the
-near-term answer is USB ethernet or one supported chip. GPU acceleration has
-no standard and is enormous - use software compositing on the framebuffer,
-which a modern CPU handles fine at 1080p. That means no 3D and no hardware
-video decode. Put both in the HCL rather than letting users discover them.
+DELIBERATELY OUT OF SCOPE, STATED PLAINLY: GPU acceleration has no standard
+and is enormous - use software compositing on the framebuffer, which a modern
+CPU handles fine at 1080p. That means no 3D and no hardware video decode, and
+it needs measuring against Chromium, which expects GPU compositing. Wifi
+beyond the two chips above stays unsupported; Broadcom in particular is the
+worst-documented family and is not worth the fight. Put all of it in the HCL
+rather than letting users discover it.
 
 MILESTONE DEMO: hand someone an ISO. They burn it, boot their own PC, the
 installer tells them the truth about their hardware, they install, and they
@@ -1197,17 +1295,27 @@ HAND-WRITTEN CORE CODE PER PHASE (rough, honest ranges)
   Phase 5  Distribution       4,000 -  8,000   (+ crypto ~3k vendored)
   Phase 6  Semantic           3,000 -  5,000   (+ inference vendored)
   Phase 7  Zero-trust         2,000 -  4,000   (+ ML-KEM ~3k vendored)
-  Phase 8  Intent UI + web    7,000 - 14,000   (+ browser ~500k vendored)
-  Phase 9  Hardware + users  16,000 - 25,000
+  Phase 8  Intent UI          4,000 -  8,000
+  Phase 9  Linux ABI         30,000 - 60,000
+  Phase 10 Hardware + users  41,000 - 63,000   (incl. wifi 25,000-38,000)
   ------------------------------------------------
-  TOTAL                     ~48,000 - 88,000 lines of your C and Zig
+  TOTAL                    ~100,000 -180,000 lines of your C and Zig
 
-THE CONSUMER TARGET ROUGHLY DOUBLES THIS PROJECT. The research-OS version of
-Jani was ~25,000-50,000 lines. Shipping to real people on real hardware adds
-drivers, an installer, recovery, signing, a WASI shim, and a browser port -
-call it another 23,000-38,000 lines of first-party code. That number is
-recorded here so it is a decision rather than a discovery. Nothing about the
-pillars changed; the obligations did.
+THE CONSUMER TARGET ROUGHLY TRIPLES THIS PROJECT. The research-OS version of
+Jani was ~25,000-50,000 lines. Shipping to real people, on real hardware,
+running real software adds drivers, wifi, an installer, recovery, signing, a
+WASI shim, and a Linux ABI layer - call it another 75,000-130,000 lines of
+first-party code. Recorded here so it is a decision rather than a discovery.
+Nothing about the pillars changed; the obligations did.
+
+CALIBRATION AGAINST THE THING YOU ARE AIMING AT: Linux 0.01 (1991) was
+~10,000 lines. Linux 1.0 (1994) was ~176,000. Linux 2.0 (1996) was ~750,000.
+Linux today is ~30 million. This target lands between Linux 1.0 and 2.0 -
+a from-scratch kernel at a scale that has actually been reached before, by
+one person and then a small community. It is NOT "Linux size" in the modern
+sense and must not be confused for it: the overwhelming majority of Linux's
+30M lines is drivers for hardware Jani will never support, plus a dozen CPU
+architectures and sixty filesystems. Design is not what makes Linux big.
 
 Those estimates describe the C-heavy kernel and vendored native core, not
 the growing application ecosystem. The kernel trunk remains majority C,

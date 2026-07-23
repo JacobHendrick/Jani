@@ -36,7 +36,7 @@ is planned; components previously assigned to Odin will be written in Zig.
 ## Where everything is
 
 - **`jani-os-blueprint.txt`** — the complete blueprint: architecture, all
-  ten phases, milestones, reading lists. This is the map for the whole
+  eleven phases, milestones, reading lists. This is the map for the whole
   project. Read Part 2 (architecture) and Part 4 (C discipline) before
   writing anything.
 - **`START-HERE.txt`** — the concrete first-session checklist for Phase 0.
@@ -63,4 +63,5 @@ is planned; components previously assigned to Odin will be written in Zig.
 - [ ] Phase 6 — semantic layer
 - [ ] Phase 7 — zero-trust hardening
 - [ ] Phase 8 — intent UI
-- [ ] Phase 9 — real hardware & real users  ← the consumer milestone
+- [ ] Phase 9 — Linux ABI & the app ecosystem  ← Chromium runs here
+- [ ] Phase 10 — real hardware & real users  ← the consumer milestone

@@ -129,31 +129,116 @@ object, so it cannot express the request.
 The flat 128-bit ID space, adopted for persistence reasons, is the enabling
 condition for the security model.
 
-### D6: Web engine is vendored, running in a native component tier
+### D6: Web access is delivered by running real browsers on the Linux ABI
 
-Web access is in scope. A from-scratch engine was considered and rejected on
-cost: Ladybird has a funded full-time team and remains pre-alpha after roughly
-six years; Servo had Mozilla engineers from 2012 and never shipped a complete
-browser; V8 and SpiderMonkey are each ~1M lines of JavaScript alone.
+**Superseded during design.** The original decision was to vendor Ladybird into
+a native component tier. D11 removes the need: with a Linux ABI layer,
+Chromium and Firefox run unmodified, so there is no engine to port and no
+native component tier to define.
 
-**Decision:** vendor Ladybird. It originated inside SerenityOS (a from-scratch
-hobby OS, so it does not assume a mature POSIX host), it is independent of
-Chromium/Blink/WebKit, and it is multi-process by design. Servo is the fallback
-if the C++ runtime requirement proves prohibitive. Revisit when Phase 8 nears.
+Rejected alternatives, recorded so they are not revisited without cause:
 
-This requires a **native component tier**: a small number of large, vendored,
-security-reviewed native components that run outside the WASM sandbox but
-inside the capability system. The browser is the first and likely only member.
-Reserving this tier now costs nothing; retrofitting it at Phase 8 would force a
-redesign, because a pure WASM-interpreter model (10-50x slower than native)
-cannot run a web engine usably.
+- **Write our own engine.** The web platform is 1,000+ specifications. Ladybird
+  has a funded full-time team and remains pre-alpha after roughly six years;
+  Servo had Mozilla engineers from 2012 and never shipped a complete browser;
+  V8 and SpiderMonkey are each ~1M lines of JavaScript alone. Not solo-reachable.
+- **Port Chromium directly onto Jani-native interfaces.** Chromium plus
+  dependencies is tens of millions of lines — 400-800x the size of the rest of
+  this OS — and assumes POSIX threads, mmap semantics, a real filesystem, BSD
+  sockets, Mojo IPC, GPU compositing, FreeType/Fontconfig/HarfBuzz, and
+  seccomp/namespace sandboxing throughout. Fuchsia ported Chromium and it took
+  Google, owning both projects, years. Its sandbox would also need rewriting
+  onto capabilities, and a 4-week security-release cadence makes rebasing
+  permanent work. Porting it buys exactly one application.
+- **Vendor Ladybird or WPE WebKit.** Viable, but strictly worse than D11 once
+  the ABI layer exists: both deliver one browser, where D11 delivers the whole
+  Linux application ecosystem for comparable effort.
 
-Ladybird's process split maps onto capabilities directly: WebContent,
-ImageDecoder, and RequestServer each receive only what they need. The
-ImageDecoder gets a decode buffer and nothing else — no storage, no network,
-no way to name anything it was not given. This yields a concrete security
-claim Windows, macOS, and Linux cannot make: **a renderer exploit cannot
-escalate, because the renderer holds no capability to escalate with.**
+The security claim survives the change. A browser's own process split
+(renderer, GPU process, network service) becomes a capability split inside the
+Linux personality: a renderer exploit cannot escalate because the renderer
+holds no capability to escalate with.
+
+### D11: Linux ABI compatibility component
+
+Jani implements the **Linux x86_64 syscall interface** — syscall number in
+`RAX`, arguments in `RDI/RSI/RDX/R10/R8/R9`, result in `RAX` — plus ELF binary
+loading. Unmodified Linux binaries then run: Chromium, Firefox,
+`wpa_supplicant`, and the broader ecosystem.
+
+**This does not violate the from-scratch constraint.** An interface is not an
+implementation; every line is first-party. Precedent: WSL1 (Linux syscalls on
+the NT kernel), gVisor (Google, in Go), FreeBSD's Linuxulator, Fuchsia's
+Starnix, and Asterinas.
+
+**Scope.** ~350 syscalls exist, but roughly 100 carry most software. The
+difficulty is semantics rather than count: exact error codes, signal
+interaction with blocked calls, `fork`/`exec` corner cases, `mmap` overlap
+rules, `/proc` contents, `futex`, and `epoll` edge-vs-level triggering. Much of
+it is undocumented behavior that real programs depend on. Estimated
+**30-60k lines**; gVisor is ~200k lines of Go for a fairly complete
+implementation.
+
+**Reconciling with D5.** The Linux ABI assumes paths, uid/gid, file
+descriptors, and ambient authority — exactly what was deleted to make the
+powerbox work. Resolution: the Linux personality is **itself a component
+holding capabilities**. Inside it, processes see a normal POSIX world with a
+synthetic filesystem; from outside, the entire world holds only the
+capabilities it was handed. Ambient authority exists, but ambient *within a
+scoped box*.
+
+This is the U13 ephemeral-world primitive generalized: legacy software gets the
+ambient authority it demands, inside a world whose total authority is bounded.
+Fuchsia demonstrates the composition — Starnix processes are ordinary
+capability-system components, so Linux compatibility did not cost Fuchsia its
+capability model.
+
+**Three app tiers result:** native WASM components (D4), WASI binaries (D4),
+and Linux binaries (D11). Native components remain the intended way to write
+*for* Jani; the Linux tier is how Jani inherits software that already exists.
+
+### D12: Wifi
+
+Required for the consumer milestone — a laptop OS without wifi is not one.
+
+**Division of labor**, following Linux's split:
+
+| Half | Responsibility | Owner |
+|---|---|---|
+| Kernel | Chip driver + 802.11 MAC (scan, associate, encrypt frames) | Jani |
+| Userspace | WPA2/WPA3 handshake, key management, network selection | `wpa_supplicant`, unmodified via D11 |
+
+**D11 pays for itself here.** `wpa_supplicant` is userspace software speaking
+nl80211 netlink to the kernel. With the ABI layer plus an nl80211-shaped
+interface, the real `wpa_supplicant` runs — meaning the WPA 4-way handshake,
+SAE exchange, and key derivation are never hand-written. That is the correct
+~8-10k lines to skip: hand-rolled WPA crypto is precisely where a subtle bug
+destroys the security property while everything appears to work.
+
+**Chip strategy, two stages:**
+
+*Stage 1 — USB dongle.* One driver serving every machine, desktop or laptop,
+riding the XHCI stack already built for keyboards. Target **ath9k_htc**
+(Atheros AR9271/AR7010) — the only wifi hardware with genuinely open-source
+firmware, so no vendor blob and no redistribution licensing question. It is
+802.11n and mostly 2.4GHz, therefore slow by current standards, but it works
+and unblocks the consumer milestone.
+
+*Stage 2 — built-in PCIe.* **Intel AX200/AX210** (iwlwifi), covering the
+majority of laptops built since 2019. Requires a vendor firmware blob, raising
+a distribution question Linux answers by shipping `linux-firmware` under
+redistribution terms; Jani would do the same.
+
+| Piece | Est. lines |
+|---|---|
+| 802.11 MAC layer (mac80211-equivalent) | 8-12k |
+| nl80211 interface for `wpa_supplicant` | 2-3k |
+| ath9k_htc USB driver (Stage 1) | 5-8k |
+| Intel AX200 driver (Stage 2) | 10-15k |
+| **Total** | **25-38k** |
+
+Initial subset: WPA2-PSK only — no enterprise EAP, no mesh, no AP mode, no
+power management. WPA3/SAE follows once the stack is stable.
 
 ### D7: Malware cannot persist
 
@@ -285,16 +370,24 @@ decode — belong in the HCL, stated plainly.
 
 | Addition | Est. lines (yours) | Phase |
 |---|---|---|
-| Drivers (incl. IOMMU) | 14-21k | 4 (written) / 9 (hardened) |
-| Installer, pre-flight, HCL, recovery | 2-4k | 9 |
+| Drivers (incl. IOMMU) | 14-21k | 4 (written) / 10 (hardened) |
+| Installer, pre-flight, HCL, recovery | 2-4k | 10 |
 | WASI shim | 2-4k | 3 |
 | Signing, declarative system state, resume verification (D7) | 2-3k | 4 |
-| Browser platform port | 3-6k (+ ~500k vendored) | 8 |
-| **Total added** | **~23-38k** | |
+| Linux ABI compatibility (D11) | 30-60k | 9 |
+| Wifi (D12) | 25-38k | 10 |
+| **Total added** | **~75-130k** | |
 
-Against the blueprint's 25-50k, the consumer target is roughly **48-88k lines
-of first-party code** — a genuine doubling of an already multi-year solo
-project. Recorded here so the number is explicit rather than discovered.
+Against the blueprint's original 25-50k, the consumer target is roughly
+**100-180k lines of first-party code.**
+
+Calibration, since the number matters: Linux 0.01 was ~10k lines, Linux 1.0
+(1994) ~176k, Linux 2.0 (1996) ~750k, and Linux today ~30M. This target sits
+between Linux 1.0 and 2.0 — a from-scratch kernel of proven, historically
+achieved scale, reachable solo over years. It is emphatically not "Linux size"
+in the modern sense; most of Linux's 30M lines are drivers for hardware Jani
+will never support, plus a dozen CPU architectures and sixty filesystems.
+
 Blueprint Part 6 carries the same figures; keep them in sync.
 
 ## Failure behavior
@@ -322,15 +415,25 @@ Blueprint Part 6 carries the same figures; keep them in sync.
 
 ## Open questions
 
-1. **Wifi.** Deferred, not answered. Reaching "a stranger boots this on their
-   laptop" eventually requires at least one supported chip. Which one, and at
-   what phase, is unresolved.
-2. **C++ runtime for the native component tier.** Ladybird needs exceptions and
-   the STL. How much runtime lands in Jani, and whether that pressure makes
-   Servo preferable, is unresolved until Phase 8 nears.
-3. **Snapshot retention policy.** How many, how long, and what evicts them.
-4. **Declarative system state format (U17).** Load-bearing for D7 but not yet
-   specified.
+1. **Linux ABI subset boundary.** Which ~100 syscalls constitute the initial
+   target, and what the failure mode is for an unimplemented one (`ENOSYS`
+   versus a hard error with diagnostics). Unresolved until Phase 9 begins.
+2. **Does D11 weaken D7?** Linux binaries are not signed Jani component
+   objects, so the U20 "code re-derived from signed objects on resume"
+   guarantee does not extend into the Linux personality as written. Options:
+   sign the personality's root filesystem image as one object, rebuild the
+   personality from a declaration on every boot (U17), or accept that the
+   Linux tier has conventional persistence and confine it accordingly. **This
+   is the most important unresolved question in the spec** — it is where the
+   malware-non-persistence property and the app ecosystem collide.
+3. **GPU for Chromium.** Chromium expects GPU compositing; software rendering
+   is slow and Jani has no GPU driver. Whether a real browser is usable on a
+   software framebuffer at 1080p needs measurement, not assumption.
+4. **Firmware blob distribution** for Stage 2 wifi (D12) — licensing and
+   packaging, following `linux-firmware`'s model.
+5. **Snapshot retention policy.** How many, how long, and what evicts them.
+6. **Declarative system state format (U17).** Load-bearing for D7 and possibly
+   for resolving question 2.
 
 ## Next step
 
