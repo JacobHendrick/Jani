@@ -9,6 +9,7 @@
 #define DISK_SECTORS 128u
 #define TABLE_CAPACITY 8u
 #define CACHE_BYTES 4096u
+#define BITMAP_BYTES ((DISK_SECTORS + 7u) / 8u)
 
 unsigned long checks_passed;
 
@@ -96,7 +97,9 @@ static void test_commit_and_remount(void) {
     struct object_table_entry remounted_entries[TABLE_CAPACITY];
     struct object_table_entry remounted_scratch[TABLE_CAPACITY];
     _Alignas(16) uint8_t cache[CACHE_BYTES];
+    uint8_t bitmap[BITMAP_BYTES];
     _Alignas(16) uint8_t remounted_cache[CACHE_BYTES];
+    uint8_t remounted_bitmap[BITMAP_BYTES];
     const struct object_table_entry *entry;
     struct object_id id;
     struct object_id type_id;
@@ -110,7 +113,8 @@ static void test_commit_and_remount(void) {
     type_id = make_id(2, 1);
 
     CHECK(object_store_format(&store, make_io(&disk), entries, scratch,
-                              TABLE_CAPACITY, cache, sizeof(cache)));
+                              TABLE_CAPACITY, cache, sizeof(cache),
+                              bitmap, sizeof(bitmap)));
     CHECK(object_store_put(&store, id, type_id, make_id(3, 1),
                            make_id(3, 1), 1, first_payload,
                            sizeof(first_payload)));
@@ -122,7 +126,8 @@ static void test_commit_and_remount(void) {
 
     CHECK(object_store_mount(&remounted, make_io(&disk), remounted_entries,
                              remounted_scratch, TABLE_CAPACITY,
-                             remounted_cache, sizeof(remounted_cache)));
+                             remounted_cache, sizeof(remounted_cache),
+                             remounted_bitmap, sizeof(remounted_bitmap)));
     entry = object_table_find(&remounted.table, id);
     CHECK(entry != NULL);
     CHECK(entry->version == 1);
@@ -146,7 +151,9 @@ static void test_crash_after_wal_recovers(void) {
     struct object_table_entry recovered_entries[TABLE_CAPACITY];
     struct object_table_entry recovered_scratch[TABLE_CAPACITY];
     _Alignas(16) uint8_t cache[CACHE_BYTES];
+    uint8_t bitmap[BITMAP_BYTES];
     _Alignas(16) uint8_t recovered_cache[CACHE_BYTES];
+    uint8_t recovered_bitmap[BITMAP_BYTES];
     const struct object_table_entry *entry;
     struct object_id first_id;
     struct object_id second_id;
@@ -160,7 +167,8 @@ static void test_crash_after_wal_recovers(void) {
     type_id = make_id(2, 1);
 
     CHECK(object_store_format(&store, make_io(&disk), entries, scratch,
-                              TABLE_CAPACITY, cache, sizeof(cache)));
+                              TABLE_CAPACITY, cache, sizeof(cache),
+                              bitmap, sizeof(bitmap)));
     CHECK(object_store_put(&store, first_id, type_id, make_id(3, 1),
                            make_id(3, 1), 1, payload, sizeof(payload)));
     CHECK(store.table.count == 1);
@@ -173,7 +181,8 @@ static void test_crash_after_wal_recovers(void) {
     disk.writes_allowed = ULONG_MAX;
     CHECK(object_store_mount(&recovered, make_io(&disk), recovered_entries,
                              recovered_scratch, TABLE_CAPACITY,
-                             recovered_cache, sizeof(recovered_cache)));
+                             recovered_cache, sizeof(recovered_cache),
+                             recovered_bitmap, sizeof(recovered_bitmap)));
     CHECK(recovered.table.count == 2);
     entry = object_table_find(&recovered.table, first_id);
     CHECK(entry != NULL);
@@ -191,7 +200,9 @@ static void test_snapshot_create_and_rollback(void) {
     struct object_table_entry remounted_entries[TABLE_CAPACITY];
     struct object_table_entry remounted_scratch[TABLE_CAPACITY];
     _Alignas(16) uint8_t cache[CACHE_BYTES];
+    uint8_t bitmap[BITMAP_BYTES];
     _Alignas(16) uint8_t remounted_cache[CACHE_BYTES];
+    uint8_t remounted_bitmap[BITMAP_BYTES];
     const struct object_table_entry *entry;
     struct object_id first_id;
     struct object_id second_id;
@@ -208,7 +219,8 @@ static void test_snapshot_create_and_rollback(void) {
     type_id = make_id(2, 1);
 
     CHECK(object_store_format(&store, make_io(&disk), entries, scratch,
-                              TABLE_CAPACITY, cache, sizeof(cache)));
+                              TABLE_CAPACITY, cache, sizeof(cache),
+                              bitmap, sizeof(bitmap)));
 
     CHECK(!object_store_snapshot_create(&store, &snapshot));
 
@@ -242,7 +254,8 @@ static void test_snapshot_create_and_rollback(void) {
 
     CHECK(object_store_mount(&remounted, make_io(&disk), remounted_entries,
                              remounted_scratch, TABLE_CAPACITY,
-                             remounted_cache, sizeof(remounted_cache)));
+                             remounted_cache, sizeof(remounted_cache),
+                             remounted_bitmap, sizeof(remounted_bitmap)));
     CHECK(remounted.table.count == 1);
     CHECK(object_table_find(&remounted.table, first_id) != NULL);
     CHECK(object_table_find(&remounted.table, second_id) == NULL);
@@ -263,7 +276,9 @@ static void test_rollback_crash_after_wal_recovers(void) {
     struct object_table_entry recovered_entries[TABLE_CAPACITY];
     struct object_table_entry recovered_scratch[TABLE_CAPACITY];
     _Alignas(16) uint8_t cache[CACHE_BYTES];
+    uint8_t bitmap[BITMAP_BYTES];
     _Alignas(16) uint8_t recovered_cache[CACHE_BYTES];
+    uint8_t recovered_bitmap[BITMAP_BYTES];
     struct object_id first_id;
     struct object_id second_id;
     struct object_id type_id;
@@ -277,7 +292,8 @@ static void test_rollback_crash_after_wal_recovers(void) {
     type_id = make_id(2, 1);
 
     CHECK(object_store_format(&store, make_io(&disk), entries, scratch,
-                              TABLE_CAPACITY, cache, sizeof(cache)));
+                              TABLE_CAPACITY, cache, sizeof(cache),
+                              bitmap, sizeof(bitmap)));
     CHECK(object_store_put(&store, first_id, type_id, make_id(3, 1),
                            make_id(3, 1), 1, payload, sizeof(payload)));
     CHECK(object_store_snapshot_create(&store, &snapshot));
@@ -292,7 +308,8 @@ static void test_rollback_crash_after_wal_recovers(void) {
     disk.writes_allowed = ULONG_MAX;
     CHECK(object_store_mount(&recovered, make_io(&disk), recovered_entries,
                              recovered_scratch, TABLE_CAPACITY,
-                             recovered_cache, sizeof(recovered_cache)));
+                             recovered_cache, sizeof(recovered_cache),
+                             recovered_bitmap, sizeof(recovered_bitmap)));
     CHECK(recovered.table.count == 1);
     CHECK(object_table_find(&recovered.table, first_id) != NULL);
     CHECK(object_table_find(&recovered.table, second_id) == NULL);
@@ -307,7 +324,9 @@ static void test_get_hot_cold_and_after_rollback(void) {
     struct object_table_entry cold_entries[TABLE_CAPACITY];
     struct object_table_entry cold_scratch[TABLE_CAPACITY];
     _Alignas(16) uint8_t cache[CACHE_BYTES];
+    uint8_t bitmap[BITMAP_BYTES];
     _Alignas(16) uint8_t cold_cache[CACHE_BYTES];
+    uint8_t cold_bitmap[BITMAP_BYTES];
     struct object_header header;
     const uint8_t *payload;
     size_t payload_size;
@@ -323,7 +342,8 @@ static void test_get_hot_cold_and_after_rollback(void) {
     type_id = make_id(2, 1);
 
     CHECK(object_store_format(&store, make_io(&disk), entries, scratch,
-                              TABLE_CAPACITY, cache, sizeof(cache)));
+                              TABLE_CAPACITY, cache, sizeof(cache),
+                              bitmap, sizeof(bitmap)));
     CHECK(object_store_put(&store, id, type_id, make_id(3, 1),
                            make_id(3, 1), 1, first_payload,
                            sizeof(first_payload)));
@@ -355,7 +375,8 @@ static void test_get_hot_cold_and_after_rollback(void) {
 
     CHECK(object_store_mount(&cold, make_io(&disk), cold_entries,
                              cold_scratch, TABLE_CAPACITY, cold_cache,
-                             sizeof(cold_cache)));
+                             sizeof(cold_cache), cold_bitmap,
+                             sizeof(cold_bitmap)));
     CHECK(cold.cache_valid == 0);
     CHECK(object_store_get(&cold, id, &header, &payload, &payload_size));
     CHECK(header.version == 1);
@@ -371,7 +392,9 @@ static void test_snapshot_discard(void) {
     struct object_table_entry remounted_entries[TABLE_CAPACITY];
     struct object_table_entry remounted_scratch[TABLE_CAPACITY];
     _Alignas(16) uint8_t cache[CACHE_BYTES];
+    uint8_t bitmap[BITMAP_BYTES];
     _Alignas(16) uint8_t remounted_cache[CACHE_BYTES];
+    uint8_t remounted_bitmap[BITMAP_BYTES];
     struct object_id id;
     struct object_id type_id;
     const uint8_t payload[] = { 1, 2, 3 };
@@ -386,7 +409,8 @@ static void test_snapshot_discard(void) {
     type_id = make_id(2, 1);
 
     CHECK(object_store_format(&store, make_io(&disk), entries, scratch,
-                              TABLE_CAPACITY, cache, sizeof(cache)));
+                              TABLE_CAPACITY, cache, sizeof(cache),
+                              bitmap, sizeof(bitmap)));
     CHECK(object_store_put(&store, id, type_id, make_id(3, 1),
                            make_id(3, 1), 1, payload, sizeof(payload)));
 
@@ -410,10 +434,115 @@ static void test_snapshot_discard(void) {
     CHECK(object_store_snapshot_discard(&store, snapshots[5]));
     CHECK(object_store_mount(&remounted, make_io(&disk), remounted_entries,
                              remounted_scratch, TABLE_CAPACITY,
-                             remounted_cache, sizeof(remounted_cache)));
+                             remounted_cache, sizeof(remounted_cache),
+                             remounted_bitmap, sizeof(remounted_bitmap)));
     CHECK(remounted.snapshots[5].id == 0);
     CHECK(remounted.snapshots[3].id == replacement);
     CHECK(remounted.snapshots[0].id == snapshots[0]);
+}
+
+static void test_collect_reclaims_freed_sectors(void) {
+    struct hosted_disk disk;
+    struct object_store store;
+    struct object_table_entry entries[TABLE_CAPACITY];
+    struct object_table_entry scratch[TABLE_CAPACITY];
+    _Alignas(16) uint8_t cache[CACHE_BYTES];
+    uint8_t bitmap[BITMAP_BYTES];
+    struct object_id id;
+    struct object_id type_id;
+    const uint8_t payload[] = { 1, 2, 3 };
+    uint64_t next_after_first;
+    uint64_t next_after_second;
+    uint64_t snapshot;
+    size_t index;
+
+    memset(&disk, 0, sizeof(disk));
+    disk.writes_allowed = ULONG_MAX;
+    type_id = make_id(2, 1);
+
+    CHECK(object_store_format(&store, make_io(&disk), entries, scratch,
+                              TABLE_CAPACITY, cache, sizeof(cache),
+                              bitmap, sizeof(bitmap)));
+
+    id = make_id(21, 1);
+    CHECK(object_store_put(&store, id, type_id, make_id(3, 1),
+                           make_id(3, 1), 1, payload, sizeof(payload)));
+    next_after_first = store.next_sector;
+
+    for (index = 0; index < 10; index++) {
+        CHECK(object_store_put(&store, id, type_id, make_id(3, 1),
+                               make_id(3, 1), index + 2, payload,
+                               sizeof(payload)));
+    }
+    next_after_second = store.next_sector;
+    CHECK(next_after_second > next_after_first);
+
+    CHECK(object_store_collect(&store));
+    CHECK(object_store_put(&store, id, type_id, make_id(3, 1),
+                           make_id(3, 1), 12, payload, sizeof(payload)));
+    CHECK(store.next_sector <= next_after_second);
+
+    memset(&disk, 0, sizeof(disk));
+    disk.writes_allowed = ULONG_MAX;
+    CHECK(object_store_format(&store, make_io(&disk), entries, scratch,
+                              TABLE_CAPACITY, cache, sizeof(cache),
+                              bitmap, sizeof(bitmap)));
+    id = make_id(22, 1);
+    CHECK(object_store_put(&store, id, type_id, make_id(3, 1),
+                           make_id(3, 1), 1, payload, sizeof(payload)));
+    CHECK(object_store_snapshot_create(&store, &snapshot));
+    CHECK(object_store_put(&store, id, type_id, make_id(3, 1),
+                           make_id(3, 1), 2, payload, sizeof(payload)));
+
+    CHECK(object_store_collect(&store));
+    CHECK(object_store_put(&store, make_id(22, 2), type_id, make_id(3, 1),
+                           make_id(3, 1), 1, payload, sizeof(payload)));
+    CHECK(object_store_snapshot_rollback(&store, snapshot));
+    CHECK(store.table.count == 1);
+    CHECK(object_table_find(&store.table, id) != NULL);
+    CHECK(object_table_find(&store.table, make_id(22, 2)) == NULL);
+}
+
+static void test_prune_keeps_newest(void) {
+    struct hosted_disk disk;
+    struct object_store store;
+    struct object_table_entry entries[TABLE_CAPACITY];
+    struct object_table_entry scratch[TABLE_CAPACITY];
+    _Alignas(16) uint8_t cache[CACHE_BYTES];
+    uint8_t bitmap[BITMAP_BYTES];
+    struct object_id id;
+    struct object_id type_id;
+    const uint8_t payload[] = { 1, 2, 3 };
+    uint64_t snapshots[6];
+    size_t index;
+    size_t used;
+
+    memset(&disk, 0, sizeof(disk));
+    disk.writes_allowed = ULONG_MAX;
+    id = make_id(23, 1);
+    type_id = make_id(2, 1);
+
+    CHECK(object_store_format(&store, make_io(&disk), entries, scratch,
+                              TABLE_CAPACITY, cache, sizeof(cache),
+                              bitmap, sizeof(bitmap)));
+    CHECK(object_store_put(&store, id, type_id, make_id(3, 1),
+                           make_id(3, 1), 1, payload, sizeof(payload)));
+
+    for (index = 0; index < 6; index++) {
+        CHECK(object_store_snapshot_create(&store, &snapshots[index]));
+    }
+
+    CHECK(object_store_snapshot_prune(&store, 2));
+
+    used = 0;
+    for (index = 0; index < OBJECT_STORE_SNAPSHOT_LIMIT; index++) {
+        if (store.snapshots[index].id != 0) {
+            used++;
+        }
+    }
+    CHECK(used == 2);
+    CHECK(!object_store_snapshot_rollback(&store, snapshots[0]));
+    CHECK(object_store_snapshot_rollback(&store, snapshots[5]));
 }
 
 int main(void) {
@@ -423,6 +552,8 @@ int main(void) {
     test_rollback_crash_after_wal_recovers();
     test_get_hot_cold_and_after_rollback();
     test_snapshot_discard();
+    test_collect_reclaims_freed_sectors();
+    test_prune_keeps_newest();
     printf("test_object_store: %lu checks passed\n", checks_passed);
     return 0;
 }

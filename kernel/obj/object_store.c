@@ -54,6 +54,106 @@ _Static_assert(
 
 #define OBJECT_STORE_TABLE_ENTRY_MAGIC UINT64_C(0x4A414E4954424C31)
 
+
+
+static uint64_t bitmap_bytes_for(uint64_t sector_count) {
+    return (sector_count + 7u) / 8u;
+}
+
+static int bitmap_test(const struct object_store *store, uint64_t sector) {
+    size_t byte_index;
+    uint8_t mask;
+
+    if (sector >= store->io.sector_count) {
+        return 1;
+    }
+
+    byte_index = (size_t)(sector / 8u);
+    mask = (uint8_t)(1u << (sector % 8u));
+    return (store->bitmap_buffer[byte_index] & mask) != 0;
+}
+
+static void bitmap_set(struct object_store *store, uint64_t sector) {
+    size_t byte_index;
+    uint8_t mask;
+
+    if (sector >= store->io.sector_count) {
+        return;
+    }
+
+    byte_index = (size_t)(sector / 8u);
+    mask = (uint8_t)(1u << (sector % 8u));
+    store->bitmap_buffer[byte_index] |= mask;
+}
+
+static void bitmap_clear(struct object_store *store, uint64_t sector) {
+    size_t byte_index;
+    uint8_t mask;
+
+    if (sector >= store->io.sector_count) {
+        return;
+    }
+
+    byte_index = (size_t)(sector / 8u);
+    mask = (uint8_t)(1u << (sector % 8u));
+    store->bitmap_buffer[byte_index] &= (uint8_t)~mask;
+}
+
+static void bitmap_set_range(
+    struct object_store *store,
+    uint64_t first_sector,
+    uint64_t count
+) {
+    uint64_t index;
+
+    for (index = 0; index < count; index++) {
+        bitmap_set(store, first_sector + index);
+    }
+}
+
+static void bitmap_clear_range(
+    struct object_store *store,
+    uint64_t first_sector,
+    uint64_t count
+) {
+    uint64_t index;
+
+    for (index = 0; index < count; index++) {
+        bitmap_clear(store, first_sector + index);
+    }
+}
+
+static int bitmap_allocate(
+    struct object_store *store,
+    uint64_t count,
+    uint64_t *first_sector_out
+) {
+    uint64_t sector;
+    uint64_t run;
+
+    if ((count == 0) || (count > store->io.sector_count)) {
+        return 0;
+    }
+
+    run = 0;
+    for (sector = OBJECT_STORE_FIRST_ALLOCATABLE_SECTOR;
+         sector < store->io.sector_count; sector++) {
+        if (bitmap_test(store, sector)) {
+            run = 0;
+            continue;
+        }
+
+        run++;
+        if (run == count) {
+            *first_sector_out = (sector - count) + 1;
+            bitmap_set_range(store, *first_sector_out, count);
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
 static int setup_store(
     struct object_store *store,
     struct object_store_io io,
@@ -61,12 +161,16 @@ static int setup_store(
     struct object_table_entry *scratch_entries,
     size_t table_capacity,
     uint8_t *cache_buffer,
-    size_t cache_capacity
+    size_t cache_capacity,
+    uint8_t *bitmap_buffer,
+    size_t bitmap_capacity
 ) {
     if ((store == NULL) || (table_entries == NULL) ||
         (scratch_entries == NULL) || (cache_buffer == NULL) ||
+        (bitmap_buffer == NULL) ||
         (table_capacity == 0) ||
         (cache_capacity < OBJECT_HEADER_SIZE) ||
+        (bitmap_capacity < bitmap_bytes_for(io.sector_count)) ||
         (((uintptr_t)cache_buffer % _Alignof(struct object_header)) != 0) ||
         (io.sector_count < OBJECT_STORE_FIRST_ALLOCATABLE_SECTOR) ||
         (io.read_sector == NULL) || (io.write_sector == NULL) ||
@@ -81,6 +185,8 @@ static int setup_store(
     store->table_capacity = table_capacity;
     store->cache_buffer = cache_buffer;
     store->cache_capacity = cache_capacity;
+    store->bitmap_buffer = bitmap_buffer;
+    store->bitmap_capacity = bitmap_capacity;
     return 1;
 }
 
@@ -244,24 +350,6 @@ static int write_table_generation(
     }
 
     return store->io.flush(store->io.context);
-}
-
-static int reserve_sectors(struct object_store *store, uint64_t count) {
-    uint64_t old_next_sector;
-
-    if ((count == 0) || (store->next_sector > store->io.sector_count) ||
-        (count > (store->io.sector_count - store->next_sector))) {
-        return 0;
-    }
-
-    old_next_sector = store->next_sector;
-    store->next_sector += count;
-    if (!write_superblock(store)) {
-        store->next_sector = old_next_sector;
-        return 0;
-    }
-
-    return 1;
 }
 
 static int write_object_bytes(
@@ -432,6 +520,66 @@ static int recover_wal(struct object_store *store, int *recovered) {
     return 1;
 }
 
+static int mark_generation(
+    struct object_store *store,
+    uint64_t table_sector,
+    uint64_t table_count
+) {
+    struct object_table generation;
+    size_t entry_index;
+
+    if (table_count == 0) {
+        return 1;
+    }
+
+    object_table_init(&generation, store->scratch_entries,
+                      store->table_capacity);
+    if (!read_table_generation(store, &generation, table_sector,
+                               (size_t)table_count)) {
+        return 0;
+    }
+
+    bitmap_set_range(store, table_sector, table_count);
+
+    for (entry_index = 0; entry_index < generation.count; entry_index++) {
+        bitmap_set_range(store,
+                         generation.entries[entry_index].first_sector,
+                         generation.entries[entry_index].sector_count);
+    }
+
+    return 1;
+}
+
+static int rebuild_bitmap(struct object_store *store) {
+    uint64_t needed;
+    size_t slot;
+
+    needed = bitmap_bytes_for(store->io.sector_count);
+    if (needed > store->bitmap_capacity) {
+        return 0;
+    }
+
+    memset(store->bitmap_buffer, 0, (size_t)needed);
+    bitmap_set_range(store, 0, OBJECT_STORE_FIRST_ALLOCATABLE_SECTOR);
+
+    if (!mark_generation(store, store->current_table_sector,
+                         store->table.count)) {
+        return 0;
+    }
+
+    for (slot = 0; slot < OBJECT_STORE_SNAPSHOT_LIMIT; slot++) {
+        if (store->snapshots[slot].id == 0) {
+            continue;
+        }
+        if (!mark_generation(store, store->snapshots[slot].table_sector,
+                             store->snapshots[slot].table_count)) {
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
 int object_store_format(
     struct object_store *store,
     struct object_store_io io,
@@ -439,17 +587,24 @@ int object_store_format(
     struct object_table_entry *scratch_entries,
     size_t table_capacity,
     uint8_t *cache_buffer,
-    size_t cache_capacity
+    size_t cache_capacity,
+    uint8_t *bitmap_buffer,
+    size_t bitmap_capacity
 ) {
     uint8_t empty_sector[OBJECT_STORE_SECTOR_SIZE];
 
     if (!setup_store(store, io, table_entries, scratch_entries,
-                     table_capacity, cache_buffer, cache_capacity)) {
+                     table_capacity, cache_buffer, cache_capacity,
+                     bitmap_buffer, bitmap_capacity)) {
         return 0;
     }
 
     store->next_sector = OBJECT_STORE_FIRST_ALLOCATABLE_SECTOR;
     store->active_superblock_sector = OBJECT_STORE_SUPERBLOCK_A;
+
+    memset(store->bitmap_buffer, 0,
+           (size_t)bitmap_bytes_for(io.sector_count));
+    bitmap_set_range(store, 0, OBJECT_STORE_FIRST_ALLOCATABLE_SECTOR);
 
     if (!write_superblock(store) || !write_superblock(store)) {
         return 0;
@@ -472,7 +627,9 @@ int object_store_mount(
     struct object_table_entry *scratch_entries,
     size_t table_capacity,
     uint8_t *cache_buffer,
-    size_t cache_capacity
+    size_t cache_capacity,
+    uint8_t *bitmap_buffer,
+    size_t bitmap_capacity
 ) {
     struct disk_superblock first;
     struct disk_superblock second;
@@ -481,7 +638,8 @@ int object_store_mount(
     int recovered;
 
     if (!setup_store(store, io, table_entries, scratch_entries,
-                     table_capacity, cache_buffer, cache_capacity) ||
+                     table_capacity, cache_buffer, cache_capacity,
+                     bitmap_buffer, bitmap_capacity) ||
         !io.read_sector(io.context, OBJECT_STORE_SUPERBLOCK_A,
                         (uint8_t *)&first) ||
         !io.read_sector(io.context, OBJECT_STORE_SUPERBLOCK_B,
@@ -519,6 +677,10 @@ int object_store_mount(
     if (!recovered &&
         !load_table_generation(store, chosen->current_table_sector,
                                (size_t)chosen->current_table_count)) {
+        return 0;
+    }
+
+    if (!rebuild_bitmap(store)) {
         return 0;
     }
 
@@ -582,13 +744,20 @@ int object_store_put(
         return 0;
     }
 
-    if ((data_sectors + candidate.count) >
-        (store->io.sector_count - store->next_sector)) {
+    if (!bitmap_allocate(store, data_sectors, &data_sector)) {
+        return 0;
+    }
+    if (!bitmap_allocate(store, candidate.count, &table_sector)) {
+        bitmap_clear_range(store, data_sector, data_sectors);
         return 0;
     }
 
-    data_sector = store->next_sector;
-    table_sector = data_sector + data_sectors;
+    if ((data_sector + data_sectors) > store->next_sector) {
+        store->next_sector = data_sector + data_sectors;
+    }
+    if ((table_sector + candidate.count) > store->next_sector) {
+        store->next_sector = table_sector + candidate.count;
+    }
     for (index = 0; index < candidate.count; index++) {
         if (object_id_equal(candidate.entries[index].id, id)) {
             candidate.entries[index].first_sector = data_sector;
@@ -620,10 +789,12 @@ int object_store_put(
         return 0;
     }
 
-    if (!reserve_sectors(store, data_sectors + candidate.count) ||
+    if (!write_superblock(store) ||
         !write_object_bytes(store, data_sector, store->cache_buffer,
                             object_byte_count) ||
         !write_table_generation(store, &candidate, table_sector)) {
+        bitmap_clear_range(store, data_sector, data_sectors);
+        bitmap_clear_range(store, table_sector, candidate.count);
         store->cache_valid = 0;
         return 0;
     }
@@ -867,6 +1038,53 @@ int object_store_snapshot_discard(
     }
 
     return 1;
+}
+
+int object_store_collect(struct object_store *store) {
+    if (store == NULL) {
+        return 0;
+    }
+
+    return rebuild_bitmap(store);
+}
+
+int object_store_snapshot_prune(struct object_store *store, size_t keep) {
+    uint64_t oldest_id;
+    size_t used;
+    size_t slot;
+    size_t oldest_slot;
+
+    if ((store == NULL) || (keep > OBJECT_STORE_SNAPSHOT_LIMIT)) {
+        return 0;
+    }
+
+    for (;;) {
+        used = 0;
+        oldest_id = 0;
+        oldest_slot = OBJECT_STORE_SNAPSHOT_LIMIT;
+
+        for (slot = 0; slot < OBJECT_STORE_SNAPSHOT_LIMIT; slot++) {
+            if (store->snapshots[slot].id == 0) {
+                continue;
+            }
+            used++;
+            if ((oldest_id == 0) ||
+                (store->snapshots[slot].id < oldest_id)) {
+                oldest_id = store->snapshots[slot].id;
+                oldest_slot = slot;
+            }
+        }
+
+        if ((used <= keep) || (oldest_slot == OBJECT_STORE_SNAPSHOT_LIMIT)) {
+            break;
+        }
+
+        if (!object_store_snapshot_discard(store, oldest_id)) {
+            return 0;
+        }
+    }
+
+    return object_store_collect(store);
 }
 
 
