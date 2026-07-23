@@ -1,0 +1,174 @@
+#include <limits.h>
+#include <stdint.h>
+#include <stdio.h>
+
+#include "../../kernel/lib/string.h"
+#include "../../kernel/obj/object_store.h"
+#include "check.h"
+
+#define DISK_SECTORS 128u
+#define TABLE_CAPACITY 8u
+#define CACHE_BYTES 4096u
+
+unsigned long checks_passed;
+
+struct hosted_disk {
+    uint8_t bytes[DISK_SECTORS][OBJECT_STORE_SECTOR_SIZE];
+    unsigned long writes_allowed;
+};
+
+static int disk_read(void *context, uint64_t sector, uint8_t *buffer) {
+    struct hosted_disk *disk = context;
+
+    if ((sector >= DISK_SECTORS) || (buffer == NULL)) {
+        return 0;
+    }
+
+    memcpy(buffer, disk->bytes[sector], OBJECT_STORE_SECTOR_SIZE);
+    return 1;
+}
+
+static int disk_write(
+    void *context,
+    uint64_t sector,
+    const uint8_t *buffer
+) {
+    struct hosted_disk *disk = context;
+
+    if ((sector >= DISK_SECTORS) || (buffer == NULL)) {
+        return 0;
+    }
+
+    if (disk->writes_allowed == 0) {
+        return 0;
+    }
+    disk->writes_allowed--;
+
+    memcpy(disk->bytes[sector], buffer, OBJECT_STORE_SECTOR_SIZE);
+    return 1;
+}
+
+static int disk_flush(void *context) {
+    return context != NULL;
+}
+
+static struct object_store_io make_io(struct hosted_disk *disk) {
+    struct object_store_io io;
+
+    io.context = disk;
+    io.sector_count = DISK_SECTORS;
+    io.read_sector = disk_read;
+    io.write_sector = disk_write;
+    io.flush = disk_flush;
+    return io;
+}
+
+static struct object_id make_id(uint64_t high, uint64_t low) {
+    struct object_id id;
+
+    id.high = high;
+    id.low = low;
+    return id;
+}
+
+static void test_commit_and_remount(void) {
+    struct hosted_disk disk;
+    struct object_store store;
+    struct object_store remounted;
+    struct object_table_entry entries[TABLE_CAPACITY];
+    struct object_table_entry scratch[TABLE_CAPACITY];
+    struct object_table_entry remounted_entries[TABLE_CAPACITY];
+    struct object_table_entry remounted_scratch[TABLE_CAPACITY];
+    _Alignas(16) uint8_t cache[CACHE_BYTES];
+    _Alignas(16) uint8_t remounted_cache[CACHE_BYTES];
+    const struct object_table_entry *entry;
+    struct object_id id;
+    struct object_id type_id;
+    const uint8_t first_payload[] = { 1, 2, 3 };
+    const uint8_t second_payload[] = { 4, 5, 6, 7 };
+    uint64_t first_sector;
+
+    memset(&disk, 0, sizeof(disk));
+    disk.writes_allowed = ULONG_MAX;
+    id = make_id(1, 1);
+    type_id = make_id(2, 1);
+
+    CHECK(object_store_format(&store, make_io(&disk), entries, scratch,
+                              TABLE_CAPACITY, cache, sizeof(cache)));
+    CHECK(object_store_put(&store, id, type_id, make_id(3, 1),
+                           make_id(3, 1), 1, first_payload,
+                           sizeof(first_payload)));
+    CHECK(store.table.count == 1);
+    entry = object_table_find(&store.table, id);
+    CHECK(entry != NULL);
+    CHECK(entry->version == 1);
+    first_sector = entry->first_sector;
+
+    CHECK(object_store_mount(&remounted, make_io(&disk), remounted_entries,
+                             remounted_scratch, TABLE_CAPACITY,
+                             remounted_cache, sizeof(remounted_cache)));
+    entry = object_table_find(&remounted.table, id);
+    CHECK(entry != NULL);
+    CHECK(entry->version == 1);
+    CHECK(entry->first_sector == first_sector);
+
+    CHECK(object_store_put(&remounted, id, type_id, make_id(3, 1),
+                           make_id(4, 1), 2, second_payload,
+                           sizeof(second_payload)));
+    entry = object_table_find(&remounted.table, id);
+    CHECK(entry != NULL);
+    CHECK(entry->version == 2);
+    CHECK(entry->first_sector != first_sector);
+}
+
+static void test_crash_after_wal_recovers(void) {
+    struct hosted_disk disk;
+    struct object_store store;
+    struct object_store recovered;
+    struct object_table_entry entries[TABLE_CAPACITY];
+    struct object_table_entry scratch[TABLE_CAPACITY];
+    struct object_table_entry recovered_entries[TABLE_CAPACITY];
+    struct object_table_entry recovered_scratch[TABLE_CAPACITY];
+    _Alignas(16) uint8_t cache[CACHE_BYTES];
+    _Alignas(16) uint8_t recovered_cache[CACHE_BYTES];
+    const struct object_table_entry *entry;
+    struct object_id first_id;
+    struct object_id second_id;
+    struct object_id type_id;
+    const uint8_t payload[] = { 9, 8, 7 };
+
+    memset(&disk, 0, sizeof(disk));
+    disk.writes_allowed = ULONG_MAX;
+    first_id = make_id(1, 1);
+    second_id = make_id(1, 2);
+    type_id = make_id(2, 1);
+
+    CHECK(object_store_format(&store, make_io(&disk), entries, scratch,
+                              TABLE_CAPACITY, cache, sizeof(cache)));
+    CHECK(object_store_put(&store, first_id, type_id, make_id(3, 1),
+                           make_id(3, 1), 1, payload, sizeof(payload)));
+    CHECK(store.table.count == 1);
+
+    disk.writes_allowed = 5;
+    CHECK(!object_store_put(&store, second_id, type_id, make_id(3, 1),
+                            make_id(3, 1), 2, payload, sizeof(payload)));
+    CHECK(disk.writes_allowed == 0);
+
+    disk.writes_allowed = ULONG_MAX;
+    CHECK(object_store_mount(&recovered, make_io(&disk), recovered_entries,
+                             recovered_scratch, TABLE_CAPACITY,
+                             recovered_cache, sizeof(recovered_cache)));
+    CHECK(recovered.table.count == 2);
+    entry = object_table_find(&recovered.table, first_id);
+    CHECK(entry != NULL);
+    entry = object_table_find(&recovered.table, second_id);
+    CHECK(entry != NULL);
+    CHECK(entry->version == 1);
+}
+
+int main(void) {
+    test_commit_and_remount();
+    test_crash_after_wal_recovers();
+    printf("test_object_store: %lu checks passed\n", checks_passed);
+    return 0;
+}

@@ -1,0 +1,645 @@
+#include <stddef.h>
+#include <stdint.h>
+
+#include "../lib/string.h"
+#include "object_store.h"
+#include "wal.h"
+
+#define OBJECT_STORE_SUPERBLOCK_MAGIC UINT64_C(0x4A414E4953544F31)
+#define OBJECT_STORE_FORMAT_VERSION UINT32_C(1)
+#define OBJECT_STORE_SUPERBLOCK_A 0
+#define OBJECT_STORE_SUPERBLOCK_B 1
+#define OBJECT_STORE_WAL_SECTOR 2
+#define OBJECT_STORE_FIRST_ALLOCATABLE_SECTOR 3
+
+struct disk_snapshot {
+    uint64_t id;
+    uint64_t table_sector;
+    uint64_t table_count;
+};
+
+struct disk_superblock {
+    uint64_t magic;
+    uint32_t format_version;
+    uint32_t sector_size;
+    uint64_t sequence;
+    uint64_t table_capacity;
+    uint64_t next_sector;
+    uint64_t current_table_sector;
+    uint64_t current_table_count;
+    uint64_t current_generation;
+    struct disk_snapshot snapshots[OBJECT_STORE_SNAPSHOT_LIMIT];
+    uint32_t checksum;
+    uint32_t reserved;
+    uint8_t padding[248];
+};
+
+struct disk_table_entry {
+    uint64_t magic;
+    struct object_table_entry entry;
+    uint32_t checksum;
+    uint32_t reserved;
+    uint8_t padding[456];
+};
+
+_Static_assert(
+    sizeof(struct disk_superblock) == OBJECT_STORE_SECTOR_SIZE,
+    "object-store superblocks must occupy exactly one sector"
+);
+
+_Static_assert(
+    sizeof(struct disk_table_entry) == OBJECT_STORE_SECTOR_SIZE,
+    "object-table entries must occupy exactly one sector"
+);
+
+#define OBJECT_STORE_TABLE_ENTRY_MAGIC UINT64_C(0x4A414E4954424C31)
+
+static int setup_store(
+    struct object_store *store,
+    struct object_store_io io,
+    struct object_table_entry *table_entries,
+    struct object_table_entry *scratch_entries,
+    size_t table_capacity,
+    uint8_t *cache_buffer,
+    size_t cache_capacity
+) {
+    if ((store == NULL) || (table_entries == NULL) ||
+        (scratch_entries == NULL) || (cache_buffer == NULL) ||
+        (table_capacity == 0) ||
+        (cache_capacity < OBJECT_HEADER_SIZE) ||
+        (((uintptr_t)cache_buffer % _Alignof(struct object_header)) != 0) ||
+        (io.sector_count < OBJECT_STORE_FIRST_ALLOCATABLE_SECTOR) ||
+        (io.read_sector == NULL) || (io.write_sector == NULL) ||
+        (io.flush == NULL)) {
+        return 0;
+    }
+
+    memset(store, 0, sizeof(*store));
+    store->io = io;
+    object_table_init(&store->table, table_entries, table_capacity);
+    store->scratch_entries = scratch_entries;
+    store->table_capacity = table_capacity;
+    store->cache_buffer = cache_buffer;
+    store->cache_capacity = cache_capacity;
+    return 1;
+}
+
+static uint32_t superblock_checksum(struct disk_superblock *superblock) {
+    uint32_t checksum;
+
+    checksum = superblock->checksum;
+    superblock->checksum = 0;
+    checksum = object_crc32c((const uint8_t *)superblock,
+                             sizeof(*superblock));
+    superblock->checksum = checksum;
+    return checksum;
+}
+
+static int superblock_is_valid(
+    struct disk_superblock *superblock,
+    uint64_t sector_count,
+    size_t expected_capacity
+) {
+    uint32_t recorded_checksum;
+    uint32_t calculated_checksum;
+
+    if ((superblock->magic != OBJECT_STORE_SUPERBLOCK_MAGIC) ||
+        (superblock->format_version != OBJECT_STORE_FORMAT_VERSION) ||
+        (superblock->sector_size != OBJECT_STORE_SECTOR_SIZE) ||
+        (superblock->table_capacity != expected_capacity) ||
+        (superblock->reserved != 0) ||
+        (superblock->next_sector < OBJECT_STORE_FIRST_ALLOCATABLE_SECTOR) ||
+        (superblock->next_sector > sector_count)) {
+        return 0;
+    }
+
+    if (((superblock->current_table_sector == 0) &&
+         (superblock->current_table_count != 0)) ||
+        (superblock->current_table_count > expected_capacity)) {
+        return 0;
+    }
+
+    if ((superblock->current_table_sector != 0) &&
+        ((superblock->current_table_sector <
+          OBJECT_STORE_FIRST_ALLOCATABLE_SECTOR) ||
+         (superblock->current_table_sector > superblock->next_sector) ||
+         (superblock->current_table_count >
+          (superblock->next_sector - superblock->current_table_sector)))) {
+        return 0;
+    }
+
+    recorded_checksum = superblock->checksum;
+    calculated_checksum = superblock_checksum(superblock);
+    superblock->checksum = recorded_checksum;
+
+    return recorded_checksum == calculated_checksum;
+}
+
+static void superblock_from_store(
+    struct disk_superblock *superblock,
+    const struct object_store *store,
+    uint64_t sequence
+) {
+    size_t index;
+
+    memset(superblock, 0, sizeof(*superblock));
+    superblock->magic = OBJECT_STORE_SUPERBLOCK_MAGIC;
+    superblock->format_version = OBJECT_STORE_FORMAT_VERSION;
+    superblock->sector_size = OBJECT_STORE_SECTOR_SIZE;
+    superblock->sequence = sequence;
+    superblock->table_capacity = store->table_capacity;
+    superblock->next_sector = store->next_sector;
+    superblock->current_table_sector = store->current_table_sector;
+    superblock->current_table_count = store->table.count;
+    superblock->current_generation = store->current_generation;
+
+    for (index = 0; index < OBJECT_STORE_SNAPSHOT_LIMIT; index++) {
+        superblock->snapshots[index].id = store->snapshots[index].id;
+        superblock->snapshots[index].table_sector =
+            store->snapshots[index].table_sector;
+        superblock->snapshots[index].table_count =
+            store->snapshots[index].table_count;
+    }
+
+    (void)superblock_checksum(superblock);
+}
+
+static int write_superblock(struct object_store *store) {
+    struct disk_superblock superblock;
+    uint64_t target_sector;
+    uint64_t next_sequence;
+
+    next_sequence = store->superblock_sequence + 1;
+    target_sector = (store->active_superblock_sector ==
+                     OBJECT_STORE_SUPERBLOCK_A) ?
+                    OBJECT_STORE_SUPERBLOCK_B : OBJECT_STORE_SUPERBLOCK_A;
+    superblock_from_store(&superblock, store, next_sequence);
+
+    if (!store->io.write_sector(store->io.context, target_sector,
+                                (const uint8_t *)&superblock) ||
+        !store->io.flush(store->io.context)) {
+        return 0;
+    }
+
+    store->superblock_sequence = next_sequence;
+    store->active_superblock_sector = target_sector;
+    return 1;
+}
+
+static uint32_t table_entry_checksum(struct disk_table_entry *record) {
+    uint32_t checksum;
+
+    checksum = record->checksum;
+    record->checksum = 0;
+    checksum = object_crc32c((const uint8_t *)record, sizeof(*record));
+    record->checksum = checksum;
+    return checksum;
+}
+
+static int table_entry_is_valid(struct disk_table_entry *record) {
+    uint32_t recorded_checksum;
+    uint32_t calculated_checksum;
+
+    if ((record->magic != OBJECT_STORE_TABLE_ENTRY_MAGIC) ||
+        (record->reserved != 0) ||
+        object_id_is_zero(record->entry.id) ||
+        (record->entry.version == 0) ||
+        (record->entry.first_sector == 0) ||
+        (record->entry.sector_count == 0)) {
+        return 0;
+    }
+
+    recorded_checksum = record->checksum;
+    calculated_checksum = table_entry_checksum(record);
+    record->checksum = recorded_checksum;
+    return recorded_checksum == calculated_checksum;
+}
+
+static int write_table_generation(
+    struct object_store *store,
+    const struct object_table *table,
+    uint64_t first_sector
+) {
+    size_t index;
+
+    if ((table == NULL) || (table->count == 0) ||
+        (table->count > table->capacity) ||
+        (first_sector < OBJECT_STORE_FIRST_ALLOCATABLE_SECTOR) ||
+        (table->count > (store->io.sector_count - first_sector))) {
+        return 0;
+    }
+
+    for (index = 0; index < table->count; index++) {
+        struct disk_table_entry record;
+
+        memset(&record, 0, sizeof(record));
+        record.magic = OBJECT_STORE_TABLE_ENTRY_MAGIC;
+        record.entry = table->entries[index];
+        (void)table_entry_checksum(&record);
+
+        if (!store->io.write_sector(store->io.context, first_sector + index,
+                                    (const uint8_t *)&record)) {
+            return 0;
+        }
+    }
+
+    return store->io.flush(store->io.context);
+}
+
+static int reserve_sectors(struct object_store *store, uint64_t count) {
+    uint64_t old_next_sector;
+
+    if ((count == 0) || (store->next_sector > store->io.sector_count) ||
+        (count > (store->io.sector_count - store->next_sector))) {
+        return 0;
+    }
+
+    old_next_sector = store->next_sector;
+    store->next_sector += count;
+    if (!write_superblock(store)) {
+        store->next_sector = old_next_sector;
+        return 0;
+    }
+
+    return 1;
+}
+
+static int write_object_bytes(
+    struct object_store *store,
+    uint64_t first_sector,
+    const uint8_t *bytes,
+    size_t byte_count
+) {
+    size_t offset;
+    uint64_t sector;
+
+    if ((bytes == NULL) || (byte_count == 0)) {
+        return 0;
+    }
+
+    offset = 0;
+    sector = first_sector;
+    while (offset < byte_count) {
+        uint8_t sector_bytes[OBJECT_STORE_SECTOR_SIZE];
+        size_t remaining;
+        size_t chunk;
+
+        memset(sector_bytes, 0, sizeof(sector_bytes));
+        remaining = byte_count - offset;
+        chunk = (remaining < sizeof(sector_bytes)) ? remaining :
+                sizeof(sector_bytes);
+        memcpy(sector_bytes, bytes + offset, chunk);
+
+        if (!store->io.write_sector(store->io.context, sector, sector_bytes)) {
+            return 0;
+        }
+
+        offset += chunk;
+        sector++;
+    }
+
+    return store->io.flush(store->io.context);
+}
+
+static int write_wal_root(
+    struct object_store *store,
+    uint64_t table_sector,
+    uint64_t table_count,
+    uint64_t generation
+) {
+    struct object_wal_record record;
+
+    memset(&record, 0, sizeof(record));
+    record.magic = OBJECT_WAL_MAGIC;
+    record.format_version = OBJECT_WAL_FORMAT_VERSION;
+    record.table_sector = table_sector;
+    record.table_count = table_count;
+    record.generation = generation;
+    record.checksum = object_crc32c((const uint8_t *)&record,
+                                    sizeof(record));
+
+    if (!object_wal_validate((const uint8_t *)&record, sizeof(record)) ||
+        !store->io.write_sector(store->io.context, OBJECT_STORE_WAL_SECTOR,
+                                (const uint8_t *)&record)) {
+        return 0;
+    }
+
+    return store->io.flush(store->io.context);
+}
+
+static int clear_wal(struct object_store *store) {
+    uint8_t empty_sector[OBJECT_STORE_SECTOR_SIZE];
+
+    memset(empty_sector, 0, sizeof(empty_sector));
+    if (!store->io.write_sector(store->io.context, OBJECT_STORE_WAL_SECTOR,
+                                empty_sector)) {
+        return 0;
+    }
+
+    return store->io.flush(store->io.context);
+}
+
+static int load_table_generation(
+    struct object_store *store,
+    uint64_t first_sector,
+    size_t count
+) {
+    size_t index;
+
+    if ((count > store->table_capacity) ||
+        ((count != 0) &&
+         ((first_sector < OBJECT_STORE_FIRST_ALLOCATABLE_SECTOR) ||
+          (count > (store->io.sector_count - first_sector))))) {
+        return 0;
+    }
+
+    store->table.count = 0;
+    for (index = 0; index < count; index++) {
+        struct disk_table_entry record;
+
+        if (!store->io.read_sector(store->io.context, first_sector + index,
+                                   (uint8_t *)&record) ||
+            !table_entry_is_valid(&record) ||
+            ((index != 0) &&
+             (object_id_compare(store->table.entries[index - 1].id,
+                                record.entry.id) >= 0))) {
+            store->table.count = 0;
+            return 0;
+        }
+
+        store->table.entries[index] = record.entry;
+        store->table.count++;
+    }
+
+    return 1;
+}
+
+static int sector_is_zero(const uint8_t *sector) {
+    size_t index;
+
+    for (index = 0; index < OBJECT_STORE_SECTOR_SIZE; index++) {
+        if (sector[index] != 0) {
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
+static int recover_wal(struct object_store *store, int *recovered) {
+    struct object_wal_record record;
+
+    *recovered = 0;
+
+    if (!store->io.read_sector(store->io.context, OBJECT_STORE_WAL_SECTOR,
+                               (uint8_t *)&record)) {
+        return 0;
+    }
+
+    if (sector_is_zero((const uint8_t *)&record)) {
+        return 1;
+    }
+
+    if (!object_wal_validate((const uint8_t *)&record, sizeof(record)) ||
+        (record.table_count > store->table_capacity) ||
+        (record.table_sector < OBJECT_STORE_FIRST_ALLOCATABLE_SECTOR) ||
+        (record.table_sector > store->next_sector) ||
+        (record.table_count > (store->next_sector - record.table_sector))) {
+        return 0;
+    }
+
+    if (!load_table_generation(store, record.table_sector,
+                               (size_t)record.table_count)) {
+        return 0;
+    }
+
+    store->current_table_sector = record.table_sector;
+    store->current_generation = record.generation;
+    if (!write_superblock(store) || !clear_wal(store)) {
+        return 0;
+    }
+
+    *recovered = 1;
+    return 1;
+}
+
+int object_store_format(
+    struct object_store *store,
+    struct object_store_io io,
+    struct object_table_entry *table_entries,
+    struct object_table_entry *scratch_entries,
+    size_t table_capacity,
+    uint8_t *cache_buffer,
+    size_t cache_capacity
+) {
+    uint8_t empty_sector[OBJECT_STORE_SECTOR_SIZE];
+
+    if (!setup_store(store, io, table_entries, scratch_entries,
+                     table_capacity, cache_buffer, cache_capacity)) {
+        return 0;
+    }
+
+    store->next_sector = OBJECT_STORE_FIRST_ALLOCATABLE_SECTOR;
+    store->active_superblock_sector = OBJECT_STORE_SUPERBLOCK_A;
+
+    if (!write_superblock(store) || !write_superblock(store)) {
+        return 0;
+    }
+
+    memset(empty_sector, 0, sizeof(empty_sector));
+    if (!store->io.write_sector(store->io.context, OBJECT_STORE_WAL_SECTOR,
+                                empty_sector) ||
+        !store->io.flush(store->io.context)) {
+        return 0;
+    }
+
+    return 1;
+}
+
+int object_store_mount(
+    struct object_store *store,
+    struct object_store_io io,
+    struct object_table_entry *table_entries,
+    struct object_table_entry *scratch_entries,
+    size_t table_capacity,
+    uint8_t *cache_buffer,
+    size_t cache_capacity
+) {
+    struct disk_superblock first;
+    struct disk_superblock second;
+    const struct disk_superblock *chosen;
+    size_t index;
+    int recovered;
+
+    if (!setup_store(store, io, table_entries, scratch_entries,
+                     table_capacity, cache_buffer, cache_capacity) ||
+        !io.read_sector(io.context, OBJECT_STORE_SUPERBLOCK_A,
+                        (uint8_t *)&first) ||
+        !io.read_sector(io.context, OBJECT_STORE_SUPERBLOCK_B,
+                        (uint8_t *)&second)) {
+        return 0;
+    }
+
+    if (superblock_is_valid(&first, io.sector_count, table_capacity) &&
+        (!superblock_is_valid(&second, io.sector_count, table_capacity) ||
+         (first.sequence >= second.sequence))) {
+        chosen = &first;
+        store->active_superblock_sector = OBJECT_STORE_SUPERBLOCK_A;
+    } else if (superblock_is_valid(&second, io.sector_count, table_capacity)) {
+        chosen = &second;
+        store->active_superblock_sector = OBJECT_STORE_SUPERBLOCK_B;
+    } else {
+        return 0;
+    }
+
+    store->superblock_sequence = chosen->sequence;
+    store->next_sector = chosen->next_sector;
+    store->current_table_sector = chosen->current_table_sector;
+    store->current_generation = chosen->current_generation;
+
+    for (index = 0; index < OBJECT_STORE_SNAPSHOT_LIMIT; index++) {
+        store->snapshots[index].id = chosen->snapshots[index].id;
+        store->snapshots[index].table_sector = chosen->snapshots[index].table_sector;
+        store->snapshots[index].table_count = chosen->snapshots[index].table_count;
+    }
+
+    if (!recover_wal(store, &recovered)) {
+        return 0;
+    }
+
+    if (!recovered &&
+        !load_table_generation(store, chosen->current_table_sector,
+                               (size_t)chosen->current_table_count)) {
+        return 0;
+    }
+
+    return 1;
+}
+
+int object_store_put(
+    struct object_store *store,
+    struct object_id id,
+    struct object_id type_id,
+    struct object_id creator_id,
+    struct object_id modifier_id,
+    uint64_t logical_timestamp,
+    const uint8_t *payload,
+    size_t payload_size
+) {
+    struct object_table candidate;
+    struct object_table_entry entry;
+    const struct object_table_entry *existing;
+    struct object_header *header;
+    uint64_t data_sectors;
+    uint64_t data_sector;
+    uint64_t table_sector;
+    uint64_t generation;
+    size_t object_byte_count;
+    size_t index;
+
+    if ((store == NULL) || object_id_is_zero(id) ||
+        object_id_is_zero(type_id) ||
+        ((payload == NULL) && (payload_size != 0)) ||
+        (payload_size > (SIZE_MAX - OBJECT_HEADER_SIZE)) ||
+        (payload_size > (store->cache_capacity - OBJECT_HEADER_SIZE))) {
+        return 0;
+    }
+
+    object_byte_count = OBJECT_HEADER_SIZE + payload_size;
+    data_sectors = (object_byte_count + (OBJECT_STORE_SECTOR_SIZE - 1)) /
+                   OBJECT_STORE_SECTOR_SIZE;
+    if ((data_sectors == 0) || (store->current_generation == UINT64_MAX)) {
+        return 0;
+    }
+
+    object_table_init(&candidate, store->scratch_entries, store->table_capacity);
+    memcpy(candidate.entries, store->table.entries,
+           store->table.count * sizeof(*candidate.entries));
+    candidate.count = store->table.count;
+
+    existing = object_table_find(&store->table, id);
+    memset(&entry, 0, sizeof(entry));
+    entry.id = id;
+    entry.version = (existing == NULL) ? 1 : existing->version + 1;
+    if (entry.version == 0) {
+        return 0;
+    }
+    entry.first_sector = OBJECT_STORE_FIRST_ALLOCATABLE_SECTOR;
+    entry.sector_count = data_sectors;
+
+    if (!object_table_upsert(&candidate, entry) ||
+        (candidate.count > UINT64_MAX) ||
+        (data_sectors > (UINT64_MAX - candidate.count))) {
+        return 0;
+    }
+
+    if ((data_sectors + candidate.count) >
+        (store->io.sector_count - store->next_sector)) {
+        return 0;
+    }
+
+    data_sector = store->next_sector;
+    table_sector = data_sector + data_sectors;
+    for (index = 0; index < candidate.count; index++) {
+        if (object_id_equal(candidate.entries[index].id, id)) {
+            candidate.entries[index].first_sector = data_sector;
+            break;
+        }
+    }
+    if (index == candidate.count) {
+        return 0;
+    }
+
+    memset(store->cache_buffer, 0, object_byte_count);
+    header = (struct object_header *)store->cache_buffer;
+    header->magic = OBJECT_HEADER_MAGIC;
+    header->format_version = OBJECT_HEADER_FORMAT_VERSION;
+    header->id = id;
+    header->type_id = type_id;
+    header->version = entry.version;
+    header->payload_size = payload_size;
+    header->creator_id = creator_id;
+    header->modifier_id = modifier_id;
+    header->logical_timestamp = logical_timestamp;
+    if (payload_size != 0) {
+        memcpy(store->cache_buffer + OBJECT_HEADER_SIZE, payload, payload_size);
+    }
+    header->payload_crc32c = object_crc32c(
+        store->cache_buffer + OBJECT_HEADER_SIZE, payload_size
+    );
+    if (!object_header_validate(store->cache_buffer, object_byte_count)) {
+        return 0;
+    }
+
+    if (!reserve_sectors(store, data_sectors + candidate.count) ||
+        !write_object_bytes(store, data_sector, store->cache_buffer,
+                            object_byte_count) ||
+        !write_table_generation(store, &candidate, table_sector)) {
+        store->cache_valid = 0;
+        return 0;
+    }
+
+    generation = store->current_generation + 1;
+    if (!write_wal_root(store, table_sector, candidate.count, generation)) {
+        store->cache_valid = 0;
+        return 0;
+    }
+
+    memcpy(store->table.entries, candidate.entries,
+           candidate.count * sizeof(*candidate.entries));
+    store->table.count = candidate.count;
+    store->current_table_sector = table_sector;
+    store->current_generation = generation;
+    if (!write_superblock(store) || !clear_wal(store)) {
+        store->cache_valid = 0;
+        return 0;
+    }
+
+    store->cache_id = id;
+    store->cache_version = entry.version;
+    store->cache_size = object_byte_count;
+    store->cache_valid = 1;
+    return 1;
+}
+
+
