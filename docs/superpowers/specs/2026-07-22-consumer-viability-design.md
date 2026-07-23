@@ -345,26 +345,211 @@ Published hardware compatibility list with three tiers: **Verified** (owned and
 tested), **Expected** (standards-only hardware), **Unsupported** (requires
 absent wifi/GPU drivers).
 
+### D13: The Linux personality has an immutable signed root
+
+Resolves the U20 collision. The personality holds two kinds of state, and
+conflating them is what created the problem:
+
+| | Contents | Treatment |
+|---|---|---|
+| **Root image** (`/usr`, `/lib`, `/bin`) | the distro — code | immutable, signed, verified, read-only |
+| **Writable layer** (`/home`, `/var`, `/tmp`) | user data, configs, profiles — data | persistent |
+
+**Four rules:**
+
+1. The root image is a signed, content-addressed, immutable Jani object,
+   signature-verified at mount and mounted read-only.
+2. **W^X at the personality level.** A page may be executable only if backed by
+   the verified root image. Malware can write a file to `/home`; it can never
+   execute it.
+3. **JIT is a capability.** V8 genuinely needs runtime code generation, so a
+   component may be granted "may create executable pages from anonymous
+   memory." The browser renderer gets it; nothing else does. The grant lives in
+   the personality's signed declaration.
+4. **Autostart is declared, not discovered.** No cron, no systemd user units,
+   no scanning `~/.config/autostart`. What runs at personality start comes from
+   the declaration (U17). This eliminates essentially every classic Linux
+   persistence vector.
+
+Precedent: iOS enforces code signing at page level and grants
+`dynamic-codesigning` to exactly one process (Safari's JIT); Android Verified
+Boot pairs a read-only system partition with SELinux W^X; ChromeOS uses
+dm-verity on a read-only rootfs with writable `/home`. All three arrived at
+immutable-system-plus-writable-data independently, and all three had to
+retrofit it onto a mutable Unix. Jani gets it by construction.
+
+**Side effect:** distro updates become object version bumps — a new signed root
+image, atomic, rollback-able via U1 using the same snapshot machinery. That is
+ChromeOS's A/B update model, and strictly better than `apt`/`dnf`, where a
+failed upgrade leaves a state nobody designed.
+
+**Residual risk, stated rather than papered over.** These rules stop
+*executable* persistence, not *interpreted* persistence: a signed `bash`
+reading an attacker-modified `.bashrc`, or a Python script in `/home`. No OS
+fully solves this. Bounds: declared autostart means something must actively
+invoke it; the writable layer is snapshot-able (U1); provenance identifies what
+wrote it and when (U6); and worst case it acts with the personality's
+capabilities, which is a scoped box, not the system.
+
+**U20 therefore holds for executable code everywhere, including the Linux
+tier.** Interpreted persistence is a documented bounded residual.
+
+### D14: Shell architecture
+
+| Layer | Language | Runs as |
+|---|---|---|
+| Compositor | Zig | **native component** |
+| Rasterizer | Zig (~5-10k, analytic-AA scanline) | native |
+| Widget toolkit | Zig, **reactive/declarative** | native or AOT-WASM |
+| Shell logic (launcher, window policy, intent bar) | Zig | WASM component |
+| Command shell | `bash` unmodified via D11 | Linux personality |
+| Text shaping and rasterization | **vendored FreeType + HarfBuzz** | — |
+
+**The compositor must be native.** U9 promises a scheduler-enforced
+input-to-photon budget. WAMR in interpreter mode runs 10-50x slower than
+native; compositing 1080p at 60fps through an interpreter will not make the
+frame budget. This revives the native component tier that D6 dropped — a
+better fit here, since the compositor is small, first-party, and auditable,
+unlike a vendored web engine. AOT-compiled WASM is the fallback if committing
+to an AOT toolchain proves preferable.
+
+**Text is vendored.** HarfBuzz (shaping) and FreeType (rasterization) are each
+~100k lines and are what Chrome, Firefox, Android, and GNOME all use. A
+first-party Latin-only text stack would mean an OS that cannot render most of
+the world's languages, which is not "user-friendly." Same bargain as WAMR.
+
+**Toolkit is reactive/declarative** (SwiftUI/Flutter-shaped): best developer
+experience, fits the component model, and the accessibility tree falls out of
+the node graph naturally.
+
+**Accessibility is a day-one requirement, not a later feature.** "User-friendly"
+includes screen readers, which need an accessibility tree built into the
+toolkit from the start. Retrofitting one is brutal — it is why accessibility
+remains poor on so many platforms.
+
+**Shell logic stays a WASM component** so it is restartable, sandboxed, and
+hot-swappable (U3): the launcher can be replaced on a running system without a
+reboot.
+
+### D15: GPU — all three tiers, via DRM uAPI plus vendored Mesa
+
+Full 3D acceleration is in scope: modesetting, 2D acceleration, and 3D.
+
+**Architecture: write the kernel half, inherit the userspace half.** A 3D stack
+splits into a kernel driver (modesetting, GPU memory management, command
+submission, fences, scheduling) and a userspace driver (Vulkan/OpenGL plus a
+shader compiler). The userspace half is the harder one — a SPIR-V-to-GPU-ISA
+compiler is a serious compiler project.
+
+Mesa is userspace and speaks to the kernel through DRM ioctls. So if the Jani
+kernel driver exposes a DRM-compatible interface, then with D11 in place:
+
+- Mesa's **ANV** (Intel Vulkan driver) runs unmodified
+- **Zink** provides OpenGL on top of that Vulkan
+- **Chromium's GPU process** works — genuinely accelerated browsing
+- **No shader compiler is written**
+
+This is the third time D11 has paid for itself, after Chromium (D6) and
+`wpa_supplicant` (D12). The pattern is now a design principle:
+
+> **Implement Linux's kernel interfaces; inherit Linux's userspace.**
+
+Every kernel-side uAPI implemented pulls a large, battle-tested userspace stack
+across the boundary at no cost. DRM ioctls are therefore a deliberate export —
+the socket Mesa plugs into — exactly as nl80211 is for `wpa_supplicant`.
+
+**Scoping.** Linux's `i915` is ~150k lines, mostly many GPU generations, every
+display output type, power management, and a decade of hardware workarounds.
+Narrowing hard: **one Intel generation** (Xe / Gen12, Tiger Lake and later),
+**Vulkan path only** (OpenGL arrives via Zink), skipping multi-GPU, exotic
+outputs, and aggressive power management initially. Estimated **40-70k lines**,
+versus 200k+ for writing both halves.
+
+**Costs that remain.** QEMU provides no meaningful Intel GPU emulation, so this
+is the one driver developed against real hardware — D1's hardware-honest
+approach does not reach it. Develop against `virtio-gpu` for general shape,
+then write the real driver on metal. It is the largest single item in the
+project, larger than the Linux ABI layer. And one generation means a narrow HCL
+entry: machines outside it fall back to the UEFI framebuffer with no
+acceleration.
+
 ## Driver scope
+
+**The organizing fact: most PC hardware speaks standards.** One driver per
+*class* covers every device in that class. Only three categories are per-device
+— wifi chips, GPU vendors, and fingerprint readers — and those are where all
+the real cost lives.
+
+### Standards-based (one driver covers everything in the class)
 
 | Driver | Covers | Est. lines |
 |---|---|---|
 | NVMe | every modern SSD | ~1k |
-| XHCI + USB HID | keyboards, mice, storage, dongles | ~4k |
+| AHCI | every SATA drive | ~1k |
+| XHCI | transport for every USB device | ~3k |
+| USB HID | **every wired keyboard and mouse ever made** | ~1k |
+| PS/2 (i8042) | older laptop internal keyboards | done (Phase 0) |
+| I2C-HID | modern laptop trackpads and touchscreens | ~1.5k |
+| EDID parser | **every monitor** | ~500 |
 | PCIe enumeration | device discovery | ~500 |
-| e1000e + RTL8169 | most desktop ethernet | ~2.5k |
-| AHCI | SATA | ~1k |
-| ACPI subset | shutdown, reboot, IRQ routing | ~2k |
+| ACPI subset | shutdown, reboot, IRQ routing, battery, lid, backlight, thermals | ~2k |
 | IOMMU (VT-d / AMD-Vi) | D3 | ~1.5-2.5k |
-| UEFI framebuffer | display, no acceleration | mostly done via Limine |
-| **Total** | | **~14-21k** |
+| Intel HDA | most built-in audio | ~1.5k |
+| USB Audio Class | every USB headset and DAC | ~1k |
+| UVC | every modern webcam | ~1.5k |
+| SDHCI | every SD card reader | ~1k |
+| Bluetooth HCI transport | see note below | ~1k |
+| **Subtotal** | | **~18-22k** |
 
-**Deliberately out of scope initially.** Wifi has no standard; every chip needs
-vendor firmware blobs and Linux's iwlwifi alone is ~50k lines. GPU acceleration
-has no standard and is enormous. Near-term answers: USB ethernet or a single
-supported chip for networking; software compositing on a plain framebuffer,
-which a modern CPU handles at 1080p. Consequences — no 3D, no hardware video
-decode — belong in the HCL, stated plainly.
+### Semi-standard (a handful of chips covers most machines)
+
+| Driver | Covers | Est. lines |
+|---|---|---|
+| Intel e1000e | most Intel built-in ethernet | ~1.5k |
+| Realtek RTL8169 | most Realtek built-in ethernet | ~1k |
+| CDC-ECM / CDC-NCM | standards-compliant USB ethernet | ~1k |
+| ASIX AX88179 | most USB-C docks and dongles | ~1k |
+| **Subtotal** | | **~4.5k** |
+
+### Per-device (the expensive categories)
+
+| Category | Est. lines | Notes |
+|---|---|---|
+| Wifi (D12) | 60-100k | 802.11 MAC + nl80211 + Intel, MediaTek, Realtek, Atheros, Broadcom |
+| GPU (D15) | 120-210k | 40-70k **per vendor**: Intel, AMD, Nvidia |
+| Fingerprint | ~0 | `libfprint` is userspace over USB — runs unmodified via D11 |
+| Thunderbolt / USB4 | — | complex, deferred |
+
+**Fingerprint readers cost nothing beyond USB.** `libfprint` and `fprintd` are
+userspace and speak to readers over USB directly, so with D11 plus USB device
+access they run unmodified — Validity, Synaptics, Goodix, and Elan covered with
+no kernel code. Fifth instance of the design principle, after Chromium,
+`wpa_supplicant`, Mesa, and BlueZ. Caveat: match-on-chip readers with secure
+enclaves are not fully supported by `libfprint` either and remain unsupported.
+
+**GPU vendor staging.** The D15 architecture is identical for all three —
+implement each vendor's DRM uAPI and Mesa's driver for that vendor runs
+unmodified, with no shader compiler written in any case. Order: **Intel**
+(best public documentation, in most laptops, ANV), then **AMD** (very good
+open documentation, RADV is excellent, covers APUs and discrete), then
+**Nvidia** (least documented, open kernel modules only since 2022 for Turing+,
+NVK still maturing). All three is ~120-210k lines — the entire rest of the
+project again. Let real demand decide whether to go past Intel.
+
+**Unsupported GPUs must degrade, not break.** Any machine falls back to the
+UEFI framebuffer and gets a working unaccelerated display. "We support Intel"
+must mean *slower* on AMD, never *dead* on AMD. This is a deliberate design
+property, not an accident.
+
+**Bluetooth applies the design principle.** HCI transport over USB is a
+standard (~1k lines), but the stack — L2CAP, SDP, HID profile, A2DP — is
+20-30k. BlueZ is userspace and speaks HCI over `AF_BLUETOOTH` sockets, so
+implementing the socket family and HCI transport makes **BlueZ run
+unmodified**. Fourth instance of the principle, after Chromium,
+`wpa_supplicant`, and Mesa.
+
+**Printers need zero kernel code.** IPP is network-based and CUPS runs in the
+Linux personality via D11.
 
 ## Scope impact
 
@@ -374,12 +559,52 @@ decode — belong in the HCL, stated plainly.
 | Installer, pre-flight, HCL, recovery | 2-4k | 10 |
 | WASI shim | 2-4k | 3 |
 | Signing, declarative system state, resume verification (D7) | 2-3k | 4 |
-| Linux ABI compatibility (D11) | 30-60k | 9 |
-| Wifi (D12) | 25-38k | 10 |
-| **Total added** | **~75-130k** | |
+| Linux ABI, complete surface (D11) | 60-120k | 9 |
+| Wifi, five chip families (D12) | 60-100k | 10 |
+| GPU, three vendors (D15) | 120-210k | 10 |
+| ARM64 port (D16) | 50-80k | 10 |
+| Shell: compositor, rasterizer, toolkit (D14) | included in Phase 8 | 8 |
+| **Total added** | **~290-510k** | |
 
-Against the blueprint's original 25-50k, the consumer target is roughly
-**100-180k lines of first-party code.**
+Against the blueprint's original 25-50k, the target is roughly **340-600k lines
+of first-party code** — genuine Linux 2.0 territory (~750k), reached by
+building more rather than by padding.
+
+### D16: Core versus coverage tail
+
+At this scale, how the work is *organized* matters more than the total. The
+scope splits into two categories with completely different properties:
+
+| | Lines | Character |
+|---|---|---|
+| **Core** | ~110-210k | Deeply interdependent, must be sequential, must be first-party |
+| **Coverage tail** | ~230-390k | Additive, independent, parallelizable |
+
+**Core** is everything through Phase 9, plus Intel GPU, ath9k_htc and Intel
+wifi, the ~100-syscall interpreter core, x86_64 only, the installer, recovery,
+and the shell. Its pieces constrain each other — the object store constrains
+recovery, which constrains the snapshot format — which is why sequencing has
+governed this design throughout.
+
+**Coverage tail** is AMD and Nvidia GPU drivers, MediaTek/Realtek/Atheros/
+Broadcom wifi, the remaining ~250 syscalls, and ARM64. None of it blocks
+anything else. A Realtek wifi driver depends only on the 802.11 MAC interface;
+ten people could write ten drivers simultaneously without coordinating.
+
+**Implication:** the coverage tail is the natural home for contributors and the
+part that parallelizes. This is exactly how Linux crossed the same threshold —
+Linus wrote a core, the community wrote the tail, and by 2.0 the driver tree
+dominated the line count and was almost entirely other people's work. Past
+roughly 200k lines the lever is contributors, not hours.
+
+**Therefore Phase 10's milestone is "boots on machines I own,"** with broader
+coverage as continuous work afterward rather than a gate beforehand. Shipping
+must not wait on the tail.
+
+**Timeline honesty:** at sustained professional output on systems code
+(10-50 lines/day shipped and tested; kernel work sits at the low end),
+340-600k lines is a 13-23 year solo effort. The core alone is 4-8 years
+full-time. Recorded so it is a decision rather than a discovery.
 
 Calibration, since the number matters: Linux 0.01 was ~10k lines, Linux 1.0
 (1994) ~176k, Linux 2.0 (1996) ~750k, and Linux today ~30M. This target sits
@@ -387,6 +612,12 @@ between Linux 1.0 and 2.0 — a from-scratch kernel of proven, historically
 achieved scale, reachable solo over years. It is emphatically not "Linux size"
 in the modern sense; most of Linux's 30M lines are drivers for hardware Jani
 will never support, plus a dozen CPU architectures and sixty filesystems.
+
+The single largest lever against this number is D15's architecture, and the
+principle behind it generalizes: **implement Linux's kernel interfaces,
+inherit Linux's userspace.** Chromium, `wpa_supplicant`, and Mesa each arrive
+free that way. Before writing any large userspace subsystem, check whether an
+existing kernel uAPI would pull a mature implementation across instead.
 
 Blueprint Part 6 carries the same figures; keep them in sync.
 
@@ -418,22 +649,26 @@ Blueprint Part 6 carries the same figures; keep them in sync.
 1. **Linux ABI subset boundary.** Which ~100 syscalls constitute the initial
    target, and what the failure mode is for an unimplemented one (`ENOSYS`
    versus a hard error with diagnostics). Unresolved until Phase 9 begins.
-2. **Does D11 weaken D7?** Linux binaries are not signed Jani component
-   objects, so the U20 "code re-derived from signed objects on resume"
-   guarantee does not extend into the Linux personality as written. Options:
-   sign the personality's root filesystem image as one object, rebuild the
-   personality from a declaration on every boot (U17), or accept that the
-   Linux tier has conventional persistence and confine it accordingly. **This
-   is the most important unresolved question in the spec** — it is where the
-   malware-non-persistence property and the app ecosystem collide.
-3. **GPU for Chromium.** Chromium expects GPU compositing; software rendering
-   is slow and Jani has no GPU driver. Whether a real browser is usable on a
-   software framebuffer at 1080p needs measurement, not assumption.
-4. **Firmware blob distribution** for Stage 2 wifi (D12) — licensing and
-   packaging, following `linux-firmware`'s model.
-5. **Snapshot retention policy.** How many, how long, and what evicts them.
-6. **Declarative system state format (U17).** Load-bearing for D7 and possibly
-   for resolving question 2.
+2. **Firmware blob distribution** for Stage 2 wifi (D12) — licensing and
+   packaging, following `linux-firmware`'s model. D15 raises the same question
+   for GPU firmware.
+3. **Snapshot retention policy.** How many, how long, and what evicts them.
+4. **Declarative system state format (U17).** Load-bearing for D7 and D13.
+5. **DRM uAPI version target** (D15). The i915 and newer `xe` kernel interfaces
+   differ; which one Mesa is expected to bind against determines the driver's
+   shape and needs deciding before Phase 10 work starts.
+
+**Resolved during design:**
+
+- *Does D11 weaken D7?* — resolved by **D13**. The personality's root image is
+  signed and immutable, W^X applies at the personality level, JIT is a
+  capability, and autostart is declared. U20 holds for executable code
+  everywhere; interpreted persistence remains a bounded, documented residual.
+- *GPU for Chromium* — resolved by **D15**. All three tiers are in scope, and
+  Mesa runs unmodified over a DRM-compatible uAPI, so Chromium's GPU process
+  works rather than falling back to software rendering.
+- *C++ runtime for a native component tier* — moot. No browser is ported (D6),
+  and the tier now exists for the first-party Zig compositor (D14).
 
 ## Next step
 

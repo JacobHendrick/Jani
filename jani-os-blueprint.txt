@@ -109,6 +109,23 @@ Consumer-viability (added 2026-07-22; see docs/superpowers/specs/
                                    interface is not an implementation -
                                    every line is still yours, as with WSL1,
                                    gVisor, Linuxulator, Starnix, Asterinas
+  U25 Immutable system image     - the Linux personality's root is one
+                                   signed read-only object; W^X at the
+                                   personality level; JIT is a capability;
+                                   autostart is declared, not discovered.
+                                   This is what extends U20 into the Linux
+                                   tier, and it makes distro updates atomic
+                                   object version bumps with U1 rollback
+
+THE DESIGN PRINCIPLE THAT FALLS OUT OF U24: IMPLEMENT LINUX'S KERNEL
+INTERFACES, INHERIT LINUX'S USERSPACE. Chromium arrives free from the syscall
+ABI. wpa_supplicant arrives free from an nl80211-shaped interface, so the WPA
+handshake is never hand-written. Mesa - the hardest piece of graphics
+software in the open-source world, including its shader compiler - arrives
+free from a DRM-compatible uAPI. Before writing any large userspace
+subsystem, check whether an existing kernel uAPI would pull a mature
+implementation across the boundary instead. This single principle is worth
+more than a hundred thousand lines to this project.
 
 CONSUMER VIABILITY IS A PROJECT GOAL, NOT AN ASPIRATION. Jani is meant to be
 run by real people on real x86_64 desktops and laptops, booted from an ISO a
@@ -1183,8 +1200,9 @@ Starnix documentation; the Asterinas papers; the ELF and System V x86_64 ABI
 specifications.
 
 --------------------------------------------------------------------------------
-PHASE 10 - REAL HARDWARE AND REAL USERS              (~41,000-63,000 lines C
-                                                      + Zig)
+PHASE 10 - REAL HARDWARE AND REAL USERS        (core ~28,000-45,000 lines C
+                                               + Zig; coverage tail adds
+                                               ~195,000-340,000 over time)
 --------------------------------------------------------------------------------
 GOAL: An ISO a stranger can burn and boot on their own x86_64 desktop or
 laptop. This is the phase that turns a research system into something people
@@ -1237,7 +1255,30 @@ design.md - read it before starting):
     a few hundred lines of boot-time C to execute without the component
     system, the runtime, or a mounted table. Otherwise you have built a
     recovery system that only works when you do not need it.
-  - WIFI (~25-38k, the single largest item in this phase). A laptop OS
+  - GPU (~40-70k PER VENDOR - the largest item in the project). Three tiers
+    matter and they are wildly different sizes: (1) modesetting - set a mode,
+    page flip, vblank sync, which is what kills tearing and makes a frame
+    budget possible at all; (2) 2D acceleration; (3) full 3D. Tier 1 is where
+    most of the perceived value is - your UEFI framebuffer can show pixels
+    but cannot page-flip, so everything tears.
+      WRITE THE KERNEL HALF, INHERIT THE USERSPACE HALF. A 3D stack is a
+      kernel driver plus a userspace driver containing a shader compiler.
+      The userspace half is the harder one - and Mesa is userspace, speaking
+      DRM ioctls. Expose a DRM-compatible uAPI and Mesa's ANV (Intel), RADV
+      (AMD), or NVK (Nvidia) runs unmodified, Zink gives you OpenGL on top,
+      and Chromium's GPU process works. YOU NEVER WRITE A SHADER COMPILER.
+      Order: Intel first (full public PRMs, in most laptops), then AMD (good
+      open docs, RADV is excellent, covers APUs and discrete), then Nvidia
+      (least documented, open kernel modules only since 2022, NVK maturing).
+      Narrow hard: one GPU generation, Vulkan path only, no multi-GPU, no
+      exotic outputs, minimal power management.
+      UNSUPPORTED GPUS MUST DEGRADE, NOT BREAK: any machine falls back to
+      the UEFI framebuffer and gets a working unaccelerated display.
+      "We support Intel" must mean SLOWER on AMD, never DEAD on AMD.
+      QEMU cannot help here - it has no meaningful Intel GPU emulation, so
+      this is the one driver developed against real hardware. Prototype
+      against virtio-gpu for shape, then write the real thing on metal.
+  - WIFI (~60-100k across five chip families). A laptop OS
     without wifi is not a laptop OS. Split it the way Linux does: the KERNEL
     owns the chip driver and the 802.11 MAC (scan, associate, encrypt
     frames); USERSPACE owns the WPA handshake and key management. Because
@@ -1257,6 +1298,29 @@ design.md - read it before starting):
       the distribution question with linux-firmware and you would too.
       Start with WPA2-PSK only: no enterprise EAP, no mesh, no AP mode, no
       power management. WPA3/SAE once the stack is stable.
+      Beyond the first two, the coverage tail is Intel iwlwifi, MediaTek
+      MT76, Realtek, and Qualcomm Atheros - each 10-20k, each independent.
+      Broadcom is the worst-documented family; do it last or never.
+  - FINGERPRINT READERS COST NOTHING BEYOND USB. libfprint and fprintd are
+    userspace and speak to readers over USB directly, so with the Phase 9
+    ABI layer they run unmodified - Validity, Synaptics, Goodix, Elan, all
+    covered with no kernel code. (Match-on-chip readers with secure enclaves
+    are unsupported by libfprint too, so they stay unsupported.)
+  - BLUETOOTH IS THE SAME TRICK. HCI transport over USB is a standard (~1k
+    lines), but the stack - L2CAP, SDP, HID profile, A2DP - is 20-30k. BlueZ
+    is userspace over AF_BLUETOOTH sockets: implement the socket family and
+    HCI transport and BlueZ runs unmodified.
+  - THE REST OF THE MACHINE IS STANDARDS AND IS THEREFORE CHEAP. One driver
+    per CLASS covers every device in that class: USB HID (~1k) handles every
+    wired keyboard and mouse ever made; EDID (~500) handles every monitor;
+    UVC (~1.5k) every modern webcam; USB Audio Class every USB headset;
+    Intel HDA most built-in audio; SDHCI every SD reader; I2C-HID modern
+    trackpads and touchscreens; ACPI battery, lid, backlight, and thermals.
+    Ethernet needs four (e1000e, RTL8169, CDC-ECM, AX88179) to cover most
+    machines plus every dock and dongle. Printers need ZERO kernel code -
+    IPP is network-based and CUPS runs in the Linux personality.
+    ONLY WIFI, GPU, AND FINGERPRINT ARE PER-DEVICE. Everything else on a
+    normal desktop or laptop is about fifteen standards-based drivers.
   - THE HARDWARE COMPATIBILITY LIST. Three tiers: Verified (you own it, you
     test it), Expected (standards-only hardware), Unsupported.
 
@@ -1295,27 +1359,60 @@ HAND-WRITTEN CORE CODE PER PHASE (rough, honest ranges)
   Phase 5  Distribution       4,000 -  8,000   (+ crypto ~3k vendored)
   Phase 6  Semantic           3,000 -  5,000   (+ inference vendored)
   Phase 7  Zero-trust         2,000 -  4,000   (+ ML-KEM ~3k vendored)
-  Phase 8  Intent UI          4,000 -  8,000
-  Phase 9  Linux ABI         30,000 - 60,000
-  Phase 10 Hardware + users  41,000 - 63,000   (incl. wifi 25,000-38,000)
+  Phase 8  Intent UI + shell  4,000 -  8,000
+  Phase 9  Linux ABI (core)  30,000 - 60,000
+  Phase 10 Hardware + users  28,000 - 45,000   (core: Intel GPU, 2 wifi
+                                                chips, installer, recovery)
   ------------------------------------------------
-  TOTAL                    ~100,000 -180,000 lines of your C and Zig
+  CORE TOTAL               ~110,000 -210,000 lines of your C and Zig
 
-THE CONSUMER TARGET ROUGHLY TRIPLES THIS PROJECT. The research-OS version of
-Jani was ~25,000-50,000 lines. Shipping to real people, on real hardware,
-running real software adds drivers, wifi, an installer, recovery, signing, a
-WASI shim, and a Linux ABI layer - call it another 75,000-130,000 lines of
-first-party code. Recorded here so it is a decision rather than a discovery.
-Nothing about the pillars changed; the obligations did.
+  COVERAGE TAIL (additive, independent, parallelizable, never a ship gate)
+  AMD + Nvidia GPU drivers     80,000 -140,000
+  Wifi chips 3-5               35,000 - 60,000
+  Remaining ~250 syscalls      30,000 - 60,000
+  ARM64 port                   50,000 - 80,000
+  ------------------------------------------------
+  TAIL TOTAL                 ~195,000 -340,000
 
-CALIBRATION AGAINST THE THING YOU ARE AIMING AT: Linux 0.01 (1991) was
-~10,000 lines. Linux 1.0 (1994) was ~176,000. Linux 2.0 (1996) was ~750,000.
-Linux today is ~30 million. This target lands between Linux 1.0 and 2.0 -
-a from-scratch kernel at a scale that has actually been reached before, by
-one person and then a small community. It is NOT "Linux size" in the modern
-sense and must not be confused for it: the overwhelming majority of Linux's
-30M lines is drivers for hardware Jani will never support, plus a dozen CPU
-architectures and sixty filesystems. Design is not what makes Linux big.
+  EVERYTHING                 ~340,000 -600,000 lines of your C and Zig
+
+SPLIT THE SCOPE IN TWO AND TRACK THEM SEPARATELY. THIS IS THE MOST IMPORTANT
+PLANNING DECISION IN PART 6. Core is deeply interdependent and must be
+sequential and first-party: the object store constrains recovery, which
+constrains the snapshot format. The coverage tail is additive - a Realtek
+wifi driver depends on nothing but the 802.11 MAC interface, and ten people
+could write ten drivers at once without coordinating. PHASE 10'S MILESTONE IS
+"BOOTS ON MACHINES I OWN," not "boots on everything." Shipping must never
+wait on the tail.
+
+This is exactly how Linux crossed the same threshold. Linus wrote a core; the
+community wrote the tail. By 2.0 the driver tree already dominated the line
+count and was almost entirely other people's work. PAST ROUGHLY 200,000 LINES
+THE LEVER IS CONTRIBUTORS, NOT HOURS - which is a strategy decision (license,
+governance, open-sourcing) rather than an engineering one, and worth its own
+conversation once there is something compelling to show.
+
+CALIBRATION: Linux 0.01 (1991) was ~10,000 lines and was solo. Linux 1.0
+(1994) was ~176,000 with ~80 contributors. Linux 2.0 (1996) was ~750,000 with
+several hundred. Linux today is ~30 million. The "everything" figure above
+lands in Linux 2.0 territory - reached by building MORE, not by padding.
+
+TIME REALISM, STATED PLAINLY: sustained output on systems code runs 10-50
+lines/day of shipped, tested work, and kernel code sits at the low end
+because every line must survive hardware that lies to you. The core alone is
+4-8 years full-time. Everything is 13-23 years solo. That number is here so
+it is a decision rather than a discovery.
+
+AND YET THE SYSTEM IS ALREADY BIGGER THAN LINUX 2.0. Count what Jani RUNS
+once the Phase 9 ABI exists: Mesa (~2M lines), Chromium (~30M), BlueZ, CUPS,
+libfprint, wpa_supplicant, and the whole Linux userspace. That capability
+arrives on top of your ~110-210k core. THE RATIO IS THE ACHIEVEMENT, NOT A
+SHORTFALL - a smaller first-party codebase at equal capability is strictly
+better: less to audit, less to get wrong, less attack surface, less to
+maintain alone. Linus needed 750,000 lines in 1996 because no mature
+userspace existed to inherit. You are building in 2026, when it does.
+Past a point, MORE FIRST-PARTY CODE IS A COST, NOT A FEATURE: writing your
+own Mesa would add 200,000 lines and be worse than Mesa.
 
 Those estimates describe the C-heavy kernel and vendored native core, not
 the growing application ecosystem. The kernel trunk remains majority C,
