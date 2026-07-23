@@ -339,21 +339,22 @@ static int clear_wal(struct object_store *store) {
     return store->io.flush(store->io.context);
 }
 
-static int load_table_generation(
+static int read_table_generation(
     struct object_store *store,
+    struct object_table *table,
     uint64_t first_sector,
     size_t count
 ) {
     size_t index;
 
-    if ((count > store->table_capacity) ||
+    if ((count > table->capacity) || (count > store->table_capacity) ||
         ((count != 0) &&
          ((first_sector < OBJECT_STORE_FIRST_ALLOCATABLE_SECTOR) ||
           (count > (store->io.sector_count - first_sector))))) {
         return 0;
     }
 
-    store->table.count = 0;
+    table->count = 0;
     for (index = 0; index < count; index++) {
         struct disk_table_entry record;
 
@@ -361,17 +362,25 @@ static int load_table_generation(
                                    (uint8_t *)&record) ||
             !table_entry_is_valid(&record) ||
             ((index != 0) &&
-             (object_id_compare(store->table.entries[index - 1].id,
+             (object_id_compare(table->entries[index - 1].id,
                                 record.entry.id) >= 0))) {
-            store->table.count = 0;
+            table->count = 0;
             return 0;
         }
 
-        store->table.entries[index] = record.entry;
-        store->table.count++;
+        table->entries[index] = record.entry;
+        table->count++;
     }
 
     return 1;
+}
+
+static int load_table_generation(
+    struct object_store *store,
+    uint64_t first_sector,
+    size_t count
+) {
+    return read_table_generation(store, &store->table, first_sector, count);
 }
 
 static int sector_is_zero(const uint8_t *sector) {
@@ -639,6 +648,118 @@ int object_store_put(
     store->cache_version = entry.version;
     store->cache_size = object_byte_count;
     store->cache_valid = 1;
+    return 1;
+}
+
+int object_store_snapshot_create(
+    struct object_store *store,
+    uint64_t *snapshot_id_out
+) {
+    struct object_store_snapshot saved[OBJECT_STORE_SNAPSHOT_LIMIT];
+    uint64_t snapshot_id;
+    uint64_t saved_generation;
+    size_t slot;
+    size_t index;
+
+    if ((store == NULL) || (snapshot_id_out == NULL) ||
+        (store->current_generation == UINT64_MAX) ||
+        (store->current_table_sector < OBJECT_STORE_FIRST_ALLOCATABLE_SECTOR) ||
+        (store->table.count == 0)) {
+        return 0;
+    }
+
+    snapshot_id = store->current_generation + 1;
+
+    slot = OBJECT_STORE_SNAPSHOT_LIMIT;
+    for (index = 0; index < OBJECT_STORE_SNAPSHOT_LIMIT; index++) {
+        if (store->snapshots[index].id == snapshot_id) {
+            return 0;
+        }
+        if ((slot == OBJECT_STORE_SNAPSHOT_LIMIT) &&
+            (store->snapshots[index].id == 0)) {
+            slot = index;
+        }
+    }
+    if (slot == OBJECT_STORE_SNAPSHOT_LIMIT) {
+        return 0;
+    }
+
+    for (index = 0; index < OBJECT_STORE_SNAPSHOT_LIMIT; index++) {
+        saved[index] = store->snapshots[index];
+    }
+    saved_generation = store->current_generation;
+
+    store->snapshots[slot].id = snapshot_id;
+    store->snapshots[slot].table_sector = store->current_table_sector;
+    store->snapshots[slot].table_count = store->table.count;
+    store->current_generation = snapshot_id;
+
+    if (!write_superblock(store)) {
+        for (index = 0; index < OBJECT_STORE_SNAPSHOT_LIMIT; index++) {
+            store->snapshots[index] = saved[index];
+        }
+        store->current_generation = saved_generation;
+        return 0;
+    }
+
+    *snapshot_id_out = snapshot_id;
+    return 1;
+}
+
+int object_store_snapshot_rollback(
+    struct object_store *store,
+    uint64_t snapshot_id
+) {
+    struct object_table candidate;
+    uint64_t table_sector;
+    uint64_t table_count;
+    uint64_t generation;
+    size_t slot;
+
+    if ((store == NULL) || (snapshot_id == 0) ||
+        (store->current_generation == UINT64_MAX)) {
+        return 0;
+    }
+
+    for (slot = 0; slot < OBJECT_STORE_SNAPSHOT_LIMIT; slot++) {
+        if (store->snapshots[slot].id == snapshot_id) {
+            break;
+        }
+    }
+    if (slot == OBJECT_STORE_SNAPSHOT_LIMIT) {
+        return 0;
+    }
+
+    table_sector = store->snapshots[slot].table_sector;
+    table_count = store->snapshots[slot].table_count;
+    if ((table_sector < OBJECT_STORE_FIRST_ALLOCATABLE_SECTOR) ||
+        (table_count == 0) || (table_count > store->table_capacity)) {
+        return 0;
+    }
+
+    object_table_init(&candidate, store->scratch_entries,
+                      store->table_capacity);
+    if (!read_table_generation(store, &candidate, table_sector,
+                               (size_t)table_count)) {
+        return 0;
+    }
+
+    generation = store->current_generation + 1;
+    if (!write_wal_root(store, table_sector, table_count, generation)) {
+        return 0;
+    }
+
+    memcpy(store->table.entries, candidate.entries,
+           candidate.count * sizeof(*store->table.entries));
+    store->table.count = candidate.count;
+    store->current_table_sector = table_sector;
+    store->current_generation = generation;
+    store->cache_valid = 0;
+
+    if (!write_superblock(store) || !clear_wal(store)) {
+        return 0;
+    }
+
     return 1;
 }
 

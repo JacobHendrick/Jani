@@ -166,9 +166,127 @@ static void test_crash_after_wal_recovers(void) {
     CHECK(entry->version == 1);
 }
 
+static void test_snapshot_create_and_rollback(void) {
+    struct hosted_disk disk;
+    struct object_store store;
+    struct object_store remounted;
+    struct object_table_entry entries[TABLE_CAPACITY];
+    struct object_table_entry scratch[TABLE_CAPACITY];
+    struct object_table_entry remounted_entries[TABLE_CAPACITY];
+    struct object_table_entry remounted_scratch[TABLE_CAPACITY];
+    _Alignas(16) uint8_t cache[CACHE_BYTES];
+    _Alignas(16) uint8_t remounted_cache[CACHE_BYTES];
+    const struct object_table_entry *entry;
+    struct object_id first_id;
+    struct object_id second_id;
+    struct object_id type_id;
+    const uint8_t payload[] = { 1, 2, 3 };
+    uint64_t snapshot;
+    uint64_t later_snapshot;
+    uint64_t table_sector;
+
+    memset(&disk, 0, sizeof(disk));
+    disk.writes_allowed = ULONG_MAX;
+    first_id = make_id(5, 1);
+    second_id = make_id(5, 2);
+    type_id = make_id(2, 1);
+
+    CHECK(object_store_format(&store, make_io(&disk), entries, scratch,
+                              TABLE_CAPACITY, cache, sizeof(cache)));
+
+    CHECK(!object_store_snapshot_create(&store, &snapshot));
+
+    CHECK(object_store_put(&store, first_id, type_id, make_id(3, 1),
+                           make_id(3, 1), 1, payload, sizeof(payload)));
+    table_sector = store.current_table_sector;
+
+    CHECK(object_store_snapshot_create(&store, &snapshot));
+    CHECK(snapshot != 0);
+    CHECK(store.snapshots[0].id == snapshot);
+    CHECK(store.snapshots[0].table_sector == table_sector);
+    CHECK(store.snapshots[0].table_count == 1);
+
+    CHECK(object_store_put(&store, second_id, type_id, make_id(3, 1),
+                           make_id(3, 1), 2, payload, sizeof(payload)));
+    CHECK(store.table.count == 2);
+
+    CHECK(object_store_snapshot_create(&store, &later_snapshot));
+    CHECK(later_snapshot != snapshot);
+
+    CHECK(!object_store_snapshot_rollback(&store, 0));
+    CHECK(!object_store_snapshot_rollback(&store, snapshot + 4242));
+
+    CHECK(object_store_snapshot_rollback(&store, snapshot));
+    CHECK(store.table.count == 1);
+    CHECK(store.current_table_sector == table_sector);
+    entry = object_table_find(&store.table, first_id);
+    CHECK(entry != NULL);
+    CHECK(object_table_find(&store.table, second_id) == NULL);
+    CHECK(store.snapshots[1].id == later_snapshot);
+
+    CHECK(object_store_mount(&remounted, make_io(&disk), remounted_entries,
+                             remounted_scratch, TABLE_CAPACITY,
+                             remounted_cache, sizeof(remounted_cache)));
+    CHECK(remounted.table.count == 1);
+    CHECK(object_table_find(&remounted.table, first_id) != NULL);
+    CHECK(object_table_find(&remounted.table, second_id) == NULL);
+    CHECK(remounted.snapshots[0].id == snapshot);
+    CHECK(remounted.snapshots[1].id == later_snapshot);
+
+    CHECK(object_store_snapshot_rollback(&remounted, later_snapshot));
+    CHECK(remounted.table.count == 2);
+    CHECK(object_table_find(&remounted.table, second_id) != NULL);
+}
+
+static void test_rollback_crash_after_wal_recovers(void) {
+    struct hosted_disk disk;
+    struct object_store store;
+    struct object_store recovered;
+    struct object_table_entry entries[TABLE_CAPACITY];
+    struct object_table_entry scratch[TABLE_CAPACITY];
+    struct object_table_entry recovered_entries[TABLE_CAPACITY];
+    struct object_table_entry recovered_scratch[TABLE_CAPACITY];
+    _Alignas(16) uint8_t cache[CACHE_BYTES];
+    _Alignas(16) uint8_t recovered_cache[CACHE_BYTES];
+    struct object_id first_id;
+    struct object_id second_id;
+    struct object_id type_id;
+    const uint8_t payload[] = { 4, 5, 6 };
+    uint64_t snapshot;
+
+    memset(&disk, 0, sizeof(disk));
+    disk.writes_allowed = ULONG_MAX;
+    first_id = make_id(7, 1);
+    second_id = make_id(7, 2);
+    type_id = make_id(2, 1);
+
+    CHECK(object_store_format(&store, make_io(&disk), entries, scratch,
+                              TABLE_CAPACITY, cache, sizeof(cache)));
+    CHECK(object_store_put(&store, first_id, type_id, make_id(3, 1),
+                           make_id(3, 1), 1, payload, sizeof(payload)));
+    CHECK(object_store_snapshot_create(&store, &snapshot));
+    CHECK(object_store_put(&store, second_id, type_id, make_id(3, 1),
+                           make_id(3, 1), 2, payload, sizeof(payload)));
+    CHECK(store.table.count == 2);
+
+    disk.writes_allowed = 1;
+    CHECK(!object_store_snapshot_rollback(&store, snapshot));
+    CHECK(disk.writes_allowed == 0);
+
+    disk.writes_allowed = ULONG_MAX;
+    CHECK(object_store_mount(&recovered, make_io(&disk), recovered_entries,
+                             recovered_scratch, TABLE_CAPACITY,
+                             recovered_cache, sizeof(recovered_cache)));
+    CHECK(recovered.table.count == 1);
+    CHECK(object_table_find(&recovered.table, first_id) != NULL);
+    CHECK(object_table_find(&recovered.table, second_id) == NULL);
+}
+
 int main(void) {
     test_commit_and_remount();
     test_crash_after_wal_recovers();
+    test_snapshot_create_and_rollback();
+    test_rollback_crash_after_wal_recovers();
     printf("test_object_store: %lu checks passed\n", checks_passed);
     return 0;
 }
