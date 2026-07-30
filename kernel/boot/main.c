@@ -6,12 +6,14 @@
 #include "../drivers/pic.h"
 #include "../drivers/pit.h"
 #include "../drivers/serial.h"
+#include "../drivers/virtio_blk.h"
 #include "../lib/printk.h"
 #include "../mm/heap.h"
 #include "../mm/layout.h"
 #include "../mm/memory_map.h"
 #include "../mm/pmm.h"
 #include "../mm/vmm.h"
+#include "../obj/object_store.h"
 
 #define LIMINE_REQUESTS_START_MARKER { 0xf6b8f4b39de7d1ae, 0xfab91a6940fcb9cf, \
                                        0x785c6ed015d3e316, 0x181e920a7852b9d9 }
@@ -144,6 +146,127 @@ static int run_heap_test(void) {
     return 1;
 }
 
+#define DEMO_SECTORS 4096u
+#define DEMO_TABLE_CAPACITY 64u
+#define DEMO_CACHE_BYTES 8192u
+#define DEMO_ARENA_BYTES 16384u
+#define DEMO_BITMAP_BYTES ((DEMO_SECTORS + 7u) / 8u)
+
+static struct object_store demo_store;
+static struct object_table_entry demo_entries[DEMO_TABLE_CAPACITY];
+static struct object_table_entry demo_scratch[DEMO_TABLE_CAPACITY];
+static _Alignas(16) uint8_t demo_cache[DEMO_CACHE_BYTES];
+static _Alignas(16) uint8_t demo_arena[DEMO_ARENA_BYTES];
+static uint8_t demo_bitmap[DEMO_BITMAP_BYTES];
+
+static int run_store_demo(void) {
+    struct object_store_io io;
+    struct object_header header;
+    const uint8_t *payload;
+    size_t payload_size;
+    struct object_id id;
+    struct object_id type_id;
+    struct object_id actor;
+    uint64_t snapshot;
+    const uint8_t first_payload[] = { 10, 20, 30 };
+    const uint8_t second_payload[] = { 40, 50, 60, 70 };
+
+    if (!virtio_blk_init()) {
+        return 0;
+    }
+
+    io.context = 0;
+    io.sector_count = virtio_blk_capacity_sectors();
+    if (io.sector_count > DEMO_SECTORS) {
+        io.sector_count = DEMO_SECTORS;
+    }
+    io.read_sector = virtio_blk_io_read;
+    io.write_sector = virtio_blk_io_write;
+    io.flush = virtio_blk_io_flush;
+
+    id.high = 0x1122334455667788ULL;
+    id.low = 0x99AABBCCDDEEFF00ULL;
+    type_id.high = 1;
+    type_id.low = 1;
+    actor.high = 2;
+    actor.low = 2;
+
+    if (object_store_mount(&demo_store, io, demo_entries, demo_scratch,
+                           DEMO_TABLE_CAPACITY, demo_cache,
+                           sizeof(demo_cache), demo_bitmap,
+                           sizeof(demo_bitmap), demo_arena,
+                           sizeof(demo_arena))) {
+        kputs("store mounted from an existing disk\n");
+
+        if (!object_store_get(&demo_store, id, &header, &payload,
+                              &payload_size)) {
+            kputs("ERROR: mounted store lost the object\n");
+            return 0;
+        }
+
+        printk("recovered across reboot: version %d, payload %d bytes\n",
+               (int)header.version, (int)payload_size);
+        return (header.version == 1) &&
+               (payload_size == sizeof(first_payload));
+    }
+
+    kputs("no valid store on disk; formatting\n");
+
+    if (!object_store_format(&demo_store, io, demo_entries, demo_scratch,
+                             DEMO_TABLE_CAPACITY, demo_cache,
+                             sizeof(demo_cache), demo_bitmap,
+                             sizeof(demo_bitmap), demo_arena,
+                             sizeof(demo_arena))) {
+        kputs("ERROR: store format failed\n");
+        return 0;
+    }
+    kputs("store format ok\n");
+
+    if (!object_store_put(&demo_store, id, type_id, actor, actor, 1,
+                          first_payload, sizeof(first_payload))) {
+        kputs("ERROR: store put v1 failed\n");
+        return 0;
+    }
+
+    if (!object_store_snapshot_create(&demo_store, &snapshot)) {
+        kputs("ERROR: snapshot create failed\n");
+        return 0;
+    }
+    printk("snapshot taken: id %d\n", (int)snapshot);
+
+    if (!object_store_put(&demo_store, id, type_id, actor, actor, 2,
+                          second_payload, sizeof(second_payload))) {
+        kputs("ERROR: store put v2 failed\n");
+        return 0;
+    }
+
+    if (!object_store_get(&demo_store, id, &header, &payload, &payload_size)) {
+        kputs("ERROR: store get after put v2 failed\n");
+        return 0;
+    }
+    printk("after mutation: version %d, payload %d bytes\n",
+           (int)header.version, (int)payload_size);
+
+    if (!object_store_snapshot_rollback(&demo_store, snapshot)) {
+        kputs("ERROR: rollback failed\n");
+        return 0;
+    }
+
+    if (!object_store_get(&demo_store, id, &header, &payload, &payload_size)) {
+        kputs("ERROR: store get after rollback failed\n");
+        return 0;
+    }
+    printk("after rollback: version %d, payload %d bytes\n",
+           (int)header.version, (int)payload_size);
+
+    if ((header.version != 1) || (payload_size != sizeof(first_payload))) {
+        kputs("ERROR: rollback did not restore version 1\n");
+        return 0;
+    }
+
+    return 1;
+}
+
 void kmain(void) {
     uint64_t free_frames_before_test;
     uint64_t test_frame;
@@ -171,6 +294,12 @@ void kmain(void) {
             kputs("heap bare-metal allocator test ok\n");
         } else {
             kputs("ERROR: heap self-test failed\n");
+        }
+
+        if (run_store_demo()) {
+            kputs("object store on virtio-blk ok\n");
+        } else {
+            kputs("ERROR: object store demo failed\n");
         }
     } else {
         kputs("ERROR: VMM self-test failed\n");
