@@ -153,13 +153,20 @@ Phase 2 work existed only in the working tree, one `git clean` from gone.
 Committed in three pieces before touching anything else. Lesson: `git status`
 at the *end* of a session, not the start of the next one.
 
-Still open: `put` memsets only `128 + payload_size` bytes of the staging
-buffer but writes whole sectors, so the tail of the last sector carries
-whatever the previous object left there. Not a correctness bug — validation
-ignores the trailing bytes — but it writes stale memory to disk and makes
-on-disk images nondeterministic. Worth a memset of the full sector span.
+Retracted, same day: I claimed `put` leaks stale staging-buffer bytes into
+the tail of an object's last sector, because it memsets only
+`128 + payload_size` while writing whole sectors. That is wrong.
+`write_object_bytes` zero-fills its per-sector stack buffer before each
+`memcpy`, so the padding written to disk is always zero and the staging
+buffer's contents never reach it. Added a test that reads the raw disk bytes
+behind a short object and asserts the tail is zero and specifically does not
+contain the previous object's fill byte; deleting the zero-fill makes it
+fail. Second wrong reading of this file in one session — both times from
+reasoning about a call site without opening the callee.
 
 Next: virtio-blk, the last Phase 2 milestone item and the store's first real
-disk.
+disk. Transport decision: **modern virtio (1.0+) over MMIO, polled** — no
+legacy port-I/O path, no MSI-X until the Phase 4 driver-component model has
+somewhere to route interrupts.
 
 <!-- Next entry goes here -->

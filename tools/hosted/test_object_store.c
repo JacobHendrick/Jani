@@ -684,6 +684,96 @@ static void fill_payload(uint8_t *buffer, size_t length, uint8_t seed) {
     }
 }
 
+static int region_is_zero(const uint8_t *bytes, size_t start, size_t end) {
+    size_t index;
+
+    for (index = start; index < end; index++) {
+        if (bytes[index] != 0) {
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
+static uint64_t first_sector_of(
+    const struct object_store *store,
+    struct object_id id
+) {
+    size_t index;
+
+    for (index = 0; index < store->table.count; index++) {
+        if (object_id_equal(store->table.entries[index].id, id)) {
+            return store->table.entries[index].first_sector;
+        }
+    }
+
+    return 0;
+}
+
+static void test_written_sectors_are_zero_padded(void) {
+    static struct pressure_disk disk;
+    struct object_store store;
+    struct object_table_entry entries[PRESSURE_TABLE];
+    struct object_table_entry scratch[PRESSURE_TABLE];
+    _Alignas(16) uint8_t cache[PRESSURE_CACHE_BYTES];
+    uint8_t bitmap[PRESSURE_BITMAP_BYTES];
+    _Alignas(16) uint8_t arena[PRESSURE_CACHE_BYTES];
+    struct object_id wide_id;
+    struct object_id narrow_id;
+    struct object_id type_id;
+    uint8_t wide_payload[400];
+    uint8_t narrow_payload[4];
+    uint64_t wide_sector;
+    uint64_t narrow_sector;
+    size_t wide_tail;
+    size_t narrow_tail;
+    size_t index;
+
+    memset(&disk, 0, sizeof(disk));
+    disk.writes_allowed = ULONG_MAX;
+    wide_id = make_id(120, 1);
+    narrow_id = make_id(120, 2);
+    type_id = make_id(2, 1);
+
+    for (index = 0; index < sizeof(wide_payload); index++) {
+        wide_payload[index] = 0xAA;
+    }
+    for (index = 0; index < sizeof(narrow_payload); index++) {
+        narrow_payload[index] = 0x11;
+    }
+
+    CHECK(object_store_format(&store, make_pressure_io(&disk), entries,
+                              scratch, PRESSURE_TABLE, cache, sizeof(cache),
+                              bitmap, sizeof(bitmap), arena, sizeof(arena)));
+
+    CHECK(object_store_put(&store, wide_id, type_id, make_id(3, 1),
+                           make_id(3, 1), 1, wide_payload,
+                           sizeof(wide_payload)));
+    CHECK(object_store_put(&store, narrow_id, type_id, make_id(3, 1),
+                           make_id(3, 1), 2, narrow_payload,
+                           sizeof(narrow_payload)));
+
+    wide_sector = first_sector_of(&store, wide_id);
+    narrow_sector = first_sector_of(&store, narrow_id);
+    CHECK(wide_sector >= 3);
+    CHECK(narrow_sector >= 3);
+    CHECK(wide_sector != narrow_sector);
+
+    wide_tail = (OBJECT_HEADER_SIZE + sizeof(wide_payload)) -
+                OBJECT_STORE_SECTOR_SIZE;
+    CHECK(region_is_zero(disk.bytes[wide_sector + 1], wide_tail,
+                         OBJECT_STORE_SECTOR_SIZE));
+
+    narrow_tail = OBJECT_HEADER_SIZE + sizeof(narrow_payload);
+    CHECK(region_is_zero(disk.bytes[narrow_sector], narrow_tail,
+                         OBJECT_STORE_SECTOR_SIZE));
+
+    for (index = narrow_tail; index < OBJECT_STORE_SECTOR_SIZE; index++) {
+        CHECK(disk.bytes[narrow_sector][index] != 0xAA);
+    }
+}
+
 static void test_cache_rejects_object_larger_than_arena(void) {
     static struct pressure_disk disk;
     struct object_store store;
@@ -960,6 +1050,7 @@ int main(void) {
     test_snapshot_discard();
     test_collect_reclaims_freed_sectors();
     test_prune_keeps_newest();
+    test_written_sectors_are_zero_padded();
     test_cache_rejects_object_larger_than_arena();
     test_cache_evicts_least_recently_used();
     test_cache_compaction_survives_eviction_cycles();
