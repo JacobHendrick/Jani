@@ -25,7 +25,7 @@ CONSTANTS Objects, Vals, MaxOps, MaxCrashes,
           BUGGY_SKIP_CHECKSUM    \* recovery trusts part1 without validation
 
 WalSlots == MaxOps           \* each op appends at most one record
-Free == "free"
+Free == <<"free">>
 
 \* TLC forbids comparing a record with a plain value, so "no op in flight"
 \* is a record too, discriminated by st = "idle"
@@ -79,6 +79,7 @@ RecordValid(d, s) ==
   IN /\ p1 # Free /\ p1[1] = "r1"
      /\ p2 # Free /\ p2[1] = "r2"
      /\ p1[2] = p2[2]
+     /\ d[<<"data", p1[2]>>] # Free
      /\ d[<<"data", p1[2]>>] = <<p1[2], p1[4]>>
 
 \* the mutant "checksum" trusts part1 alone
@@ -87,7 +88,7 @@ LooksValid(d, s) ==
     THEN LET p1 == d[<<"wal", 2*s - 1>>] IN p1 # Free /\ p1[1] = "r1"
     ELSE RecordValid(d, s)
 
-ScanStart(d) == d[<<"sb", 0>>]
+ScanStart(d) == d[<<"sb", 0>>][2]
 
 \* length of the valid record prefix recovery will replay
 ValidLen(d) ==
@@ -98,7 +99,9 @@ ValidLen(d) ==
        /\ (n = Bound) \/ ~LooksValid(d, start + n)
 
 HomeTable(d) ==
-  [o \in Objects |-> IF d[<<"home", o>>] = Free THEN 0 ELSE d[<<"home", o>>]]
+  [o \in Objects |->
+     LET home == d[<<"home", o>>]
+     IN IF home[1] = "home" THEN home[2] ELSE 0]
 
 RECURSIVE ApplyFrom(_, _, _, _)
 ApplyFrom(d, t, s, stop) ==
@@ -119,7 +122,7 @@ Recovers(d, id, o) == Replay(d)[o] = id
 (* -------------------------------- actions --------------------------------- *)
 
 Init ==
-  /\ disk = [s \in Sectors |-> IF s = <<"sb", 0>> THEN 1 ELSE Free]
+  /\ disk = [s \in Sectors |-> IF s = <<"sb", 0>> THEN <<"sb", 1>> ELSE Free]
   /\ pending = EmptyCache
   /\ phase = "running"
   /\ mtable = [o \in Objects |-> 0]
@@ -179,7 +182,7 @@ AckCommit ==
 
 ApplyHome(o) ==
   /\ phase = "running" /\ o \in dirty
-  /\ pending' = Put(pending, <<"home", o>>, mtable[o])
+  /\ pending' = Put(pending, <<"home", o>>, <<"home", mtable[o]>>)
   /\ dirty' = dirty \ {o}
   /\ UNCHANGED <<disk, phase, mtable, walNext, op, nextOp, crashes,
                  hstore, acked>>
@@ -197,13 +200,28 @@ WriteSB ==
   /\ walNext > ScanStart(disk)
   /\ IF BUGGY_TRUNCATE_FIRST THEN TRUE ELSE HomesDurable
   /\ op.st \in {"idle", "begun", "payload"}
-  /\ pending' = Put(pending, <<"sb", 0>>, walNext)
+  /\ pending' = Put(pending, <<"sb", 0>>, <<"sb", walNext>>)
   /\ UNCHANGED <<disk, phase, mtable, dirty, walNext, op, nextOp, crashes,
                  hstore, acked>>
 
-\* TODO(Task 4, written by Jacob): Crash - subset of pending survives,
-\* history updated iff recovery of the post-crash disk resurrects the
-\* in-flight op.
+Crash ==
+  /\ crashes < MaxCrashes
+  /\ phase = "running"
+  /\ \E keep \in SUBSET (DOMAIN pending) :
+       LET newDisk == Merge(disk, [s \in keep |-> pending[s]])
+       IN /\ disk' = newDisk
+          /\ pending' = EmptyCache
+          /\ phase' = "down"
+          /\ mtable' = [o \in Objects |-> 0]
+          /\ dirty' = {}
+          /\ walNext' = 1
+          /\ op' = IdleOp
+          /\ crashes' = crashes + 1
+          /\ hstore' =
+               IF op.st = "logged" /\ Recovers(newDisk, op.id, op.obj)
+                 THEN [hstore EXCEPT ![op.obj] = Append(@, op.val)]
+                 ELSE hstore
+          /\ UNCHANGED <<nextOp, acked>>
 
 Recover ==
   /\ phase = "down"
@@ -218,8 +236,8 @@ Next ==
   \/ WritePayload \/ AppendRecord \/ Flush \/ AckCommit
   \/ \E o \in Objects : ApplyHome(o)
   \/ WriteSB
+  \/ Crash
   \/ Recover
-  \* TODO(Task 4): add Crash here
 
 Spec == Init /\ [][Next]_vars
 
@@ -243,9 +261,44 @@ HistoryMatch ==
       IF hstore[o] = <<>>
         THEN mtable[o] = 0
         ELSE /\ mtable[o] # 0
+             /\ Content(<<"data", mtable[o]>>) # Free
              /\ Content(<<"data", mtable[o]>>) = <<mtable[o], Last(hstore[o])>>
 
-\* TODO(Task 4, written by Jacob): NoTornVersionVisible
+NoTornVersionVisible ==
+  phase = "running" =>
+    \A o \in Objects :
+      mtable[o] # 0 =>
+        /\ Content(<<"data", mtable[o]>>) # Free
+        /\ \E v \in Vals :
+             Content(<<"data", mtable[o]>>) = <<mtable[o], v>>
 
-\* TODO(Task 5): refinement instance (AbsSpec) and DurableRecoverable
+(* ------------------------- refinement + durability ------------------------ *)
+
+AbsInflight == IF op.st = "idle" THEN <<>> ELSE <<op.id, op.obj, op.val>>
+
+Abs == INSTANCE WalCommitAbstract
+       WITH store <- hstore, acked <- acked,
+            inflight <- AbsInflight, nextOp <- nextOp
+
+\* every sector-level behavior is a behavior of the atomic-commit machine
+AbsSpec == Abs!Spec
+
+(* If all volatile state vanished now, recovery from the platter alone must  *)
+(* reproduce committed history. The last case is the commit-point straddle:  *)
+(* a durable in-flight record can be recovered before its ack is sent.        *)
+DurableRecoverable ==
+  phase = "running" =>
+    LET t == Replay(disk)
+    IN \A o \in Objects :
+         \/ /\ hstore[o] = <<>>
+            /\ t[o] = 0
+         \/ /\ hstore[o] # <<>>
+            /\ t[o] # 0
+            /\ disk[<<"data", t[o]>>] # Free
+            /\ disk[<<"data", t[o]>>] = <<t[o], Last(hstore[o])>>
+         \/ /\ op.st = "logged"
+            /\ o = op.obj
+            /\ t[o] = op.id
+            /\ disk[<<"data", op.id>>] # Free
+            /\ disk[<<"data", op.id>>] = <<op.id, op.val>>
 ================================================================================

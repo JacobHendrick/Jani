@@ -101,8 +101,9 @@ indistinguishable from the atomic machine.
 
 - `TypeOK` — shapes of all variables
 - `NoTornVersionVisible` — no readable object version is partially written
-- `CheckpointNeverOrphansAckedOp` — WAL truncation never removes a record
-  whose effects are not yet durable at the table home location
+- `DurableRecoverable` — recovery from durable state alone reproduces the
+  committed history. This subsumes checkpoint-orphan safety: advancing the
+  superblock past an un-homed record makes the invariant fail.
 - Refinement property (above)
 
 ## Model-checking configuration
@@ -122,7 +123,10 @@ files):
 - `BUGGY_NO_WAL_FLUSH` — ack without the WAL flush barrier
 - `BUGGY_TRUNCATE_FIRST` — checkpoint truncates before table writes are
   durable
-- `BUGGY_REPLAY_PAST_TEAR` — recovery replays records after a torn one
+- `BUGGY_SKIP_CHECKSUM` — recovery trusts a record without validating its
+  parts and payload, so it replays through a tear instead of stopping.
+  This was renamed during planning because continuing past a torn record in
+  the linear, non-reused WAL is harmless; trusting the torn record is not.
 
 If TLC cannot break a mutant, the model is too weak to trust.
 

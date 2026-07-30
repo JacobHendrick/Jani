@@ -13,10 +13,14 @@
 - **Task 2 COMPLETE** (commit `504e9a84`): abstract spec green, 712 states.
 - **Task 3 COMPLETE** (commit `c374deda`): concrete spec crash-free green,
   7,573 states, `TypeOK` + `HistoryMatch`. `make model-check` works.
-- **Task 4 NEXT** — designed to be written by Jacob (see task header); the
-  two TODO markers are in `docs/models/WalCommit.tla`. All semantics needed
-  are in the task's Guidance paragraphs.
-- **Tasks 5–7 not started.**
+- **Task 4 COMPLETE** (delegated by Jacob): crash semantics use an arbitrary
+  subset of pending writes, and `NoTornVersionVisible` checks every visible
+  payload. TLC is green over 138,767 distinct crash/recovery states.
+- **Tasks 5–7 COMPLETE (uncommitted)**: refinement and durability checks are
+  green over 138,767 distinct states; all three protocol mutants produce the
+  expected counterexamples; hosted PMM and heap tests remain green. Commits
+  were intentionally left for a separate cleanup because the worktree mixes
+  uncommitted Phase 1 code with the model changes.
 
 **Deviation from the code below (already applied in the committed spec):**
 TLC rejects comparing a record with a string, so `None == "none"` was
@@ -547,9 +551,9 @@ git commit -m "R9: sector-level WAL commit model, crash-free happy path
 
 **Guidance for NoTornVersionVisible** (~4 lines): when `phase = "running"`, every object with a table entry (`mtable[o] # 0`) must have an intact payload: `Content(<<"data", mtable[o]>>)` equals `<<mtable[o], v>>` for some `v \in Vals`. This is the "or torn" half of the blueprint invariant — a table entry pointing at garbage is a torn version made visible.
 
-- [ ] **Step 1 (Jacob): Write `Crash`, add it to `Next`, write `NoTornVersionVisible`, add the invariant line to `WalCommit.cfg`**
+- [x] **Step 1: Write `Crash`, add it to `Next`, write `NoTornVersionVisible`, add the invariant line to `WalCommit.cfg`**
 
-- [ ] **Step 2: Run the checker**
+- [x] **Step 2: Run the checker**
 
 ```bash
 make model-check
@@ -577,7 +581,7 @@ git commit -m "R9: crash semantics and torn-version invariant (subset-crash mode
 - Consumes: module `WalCommitAbstract` (Task 2), `Replay`, `Last`, `hstore`, `acked`, `op`, `nextOp` (Tasks 3–4).
 - Produces: `AbsSpec` (TLC PROPERTY), `DurableRecoverable` (invariant).
 
-- [ ] **Step 1: Replace the Task 5 TODO with the refinement and invariant**
+- [x] **Step 1: Replace the Task 5 TODO with the refinement and invariant**
 
 ```tla
 (* ------------------------- refinement + durability ------------------------ *)
@@ -610,7 +614,7 @@ DurableRecoverable ==
             /\ disk[<<"data", op.id>>] = <<op.id, op.val>>
 ```
 
-- [ ] **Step 2: Extend the config**
+- [x] **Step 2: Extend the config**
 
 Add to `docs/models/WalCommit.cfg`:
 
@@ -619,7 +623,7 @@ INVARIANT DurableRecoverable
 PROPERTY AbsSpec
 ```
 
-- [ ] **Step 3: Run the checker — expect green**
+- [x] **Step 3: Run the checker — expect green**
 
 ```bash
 make model-check
@@ -648,7 +652,7 @@ git commit -m "R9: refinement of abstract commit machine + durability invariant
 **Interfaces:**
 - Consumes: the `BUGGY_*` branches already inside `WalCommit.tla` (Task 3) and the full invariant set (Tasks 4–5).
 
-- [ ] **Step 1: Write the three mutant configs**
+- [x] **Step 1: Write the three mutant configs**
 
 Each is `WalCommit.cfg` with exactly one flag flipped. `docs/models/WalCommitBugNoFlush.cfg`:
 
@@ -672,7 +676,7 @@ PROPERTY AbsSpec
 `WalCommitBugTruncateFirst.cfg`: same, but `BUGGY_NO_WAL_FLUSH = FALSE` and `BUGGY_TRUNCATE_FIRST = TRUE`.
 `WalCommitBugSkipChecksum.cfg`: same, but only `BUGGY_SKIP_CHECKSUM = TRUE`.
 
-- [ ] **Step 2: Run each mutant by hand and read one trace**
+- [x] **Step 2: Run each mutant by hand and read one trace**
 
 ```bash
 cd docs/models && java -cp ../../third_party/tla2tools.jar tlc2.TLC \
@@ -681,7 +685,7 @@ cd docs/models && java -cp ../../third_party/tla2tools.jar tlc2.TLC \
 
 Expected: `Error: Invariant ... is violated` (nonzero exit) with a counterexample trace. Repeat for the other two configs. For at least one mutant, read the trace end-to-end and confirm it tells the expected story (e.g., NoFlush: ack fires, crash drops the record, recovery forgets an acked op). If any mutant comes back green, THE MODEL IS TOO WEAK — stop and strengthen invariants before proceeding (do not weaken the mutant).
 
-- [ ] **Step 3: Add the Makefile target**
+- [x] **Step 3: Add the Makefile target**
 
 ```make
 BUG_CFGS := WalCommitBugNoFlush WalCommitBugTruncateFirst WalCommitBugSkipChecksum
@@ -700,7 +704,7 @@ model-check-negative: $(TLA_TOOLS)
 	done
 ```
 
-- [ ] **Step 4: Run both targets — positive green, negative all-caught**
+- [x] **Step 4: Run both targets — positive green, negative all-caught**
 
 ```bash
 make model-check && make model-check-negative
@@ -726,7 +730,7 @@ git commit -m "R9: negative validation - three protocol mutants TLC must break
 - Modify: `docs/devlog.md` (new entry above the `<!-- Next entry goes here -->` marker)
 - Modify: `README.md` (add the two make targets wherever existing targets are listed)
 
-- [ ] **Step 1: Amend the spec's mutant list**
+- [x] **Step 1: Amend the spec's mutant list**
 
 In the design doc's "Negative validation" section, replace the `BUGGY_REPLAY_PAST_TEAR` bullet with:
 
@@ -747,7 +751,7 @@ Also in the spec's "Invariants" list, replace the `CheckpointNeverOrphansAckedOp
   advance that skips an un-homed record makes this fail at the next state)
 ```
 
-- [ ] **Step 2: Devlog entry**
+- [x] **Step 2: Devlog entry**
 
 Add above the `<!-- Next entry goes here -->` marker in `docs/devlog.md` (adjust the date and state to reality — especially if TLC ever went red and taught something; that belongs in the log):
 
@@ -767,11 +771,11 @@ recovery must replay strictly in slot order because the superblock pointer
 can lag the homes.
 ```
 
-- [ ] **Step 3: README target list**
+- [x] **Step 3: README target list**
 
 Add `make model-check` / `make model-check-negative` lines next to where `make test` and `make fuzz-heap` are documented in README.md, phrased to match the surrounding style.
 
-- [ ] **Step 4: Final full verification**
+- [x] **Step 4: Final full verification**
 
 ```bash
 make test && make model-check && make model-check-negative
