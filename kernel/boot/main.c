@@ -1,3 +1,4 @@
+#include <stddef.h>
 #include <stdint.h>
 
 #include "../arch/gdt.h"
@@ -6,6 +7,7 @@
 #include "../drivers/pit.h"
 #include "../drivers/serial.h"
 #include "../lib/printk.h"
+#include "../mm/heap.h"
 #include "../mm/layout.h"
 #include "../mm/memory_map.h"
 #include "../mm/pmm.h"
@@ -66,6 +68,82 @@ static void halt_forever(void) {
     }
 }
 
+static int run_heap_test(void) {
+    uint8_t *small_block;
+    uint8_t *large_block;
+    uint8_t *reused_block;
+    uint8_t *grown_block;
+    uint8_t *shrunk_block;
+    size_t index;
+
+    kheap_init(MEMORY_LAYOUT_HEAP_BASE, MEMORY_LAYOUT_HEAP_SIZE);
+
+    small_block = kmalloc(32);
+    large_block = kmalloc(5000);
+
+    if ((small_block == 0) || (large_block == 0) ||
+        (((uintptr_t)small_block % 16) != 0) ||
+        (((uintptr_t)large_block % 16) != 0)) {
+        return 0;
+    }
+
+    small_block[0] = 0xA5;
+    small_block[31] = 0x5A;
+    for (index = 0; index < 5000; index++) {
+        large_block[index] = (uint8_t)(index ^ 0x5A);
+    }
+
+    if ((small_block[0] != 0xA5) || (small_block[31] != 0x5A) ||
+        (large_block[0] != (uint8_t)(0 ^ 0x5A)) ||
+        (large_block[4999] != (uint8_t)(4999 ^ 0x5A))) {
+        return 0;
+    }
+
+    kfree(small_block);
+    reused_block = kmalloc(16);
+
+    if (reused_block != small_block) {
+        return 0;
+    }
+
+    reused_block[0] = 0x3C;
+    reused_block[15] = 0xC3;
+    if ((reused_block[0] != 0x3C) || (reused_block[15] != 0xC3)) {
+        return 0;
+    }
+    kputs("heap free-list reuse test ok\n");
+
+    grown_block = krealloc(large_block, 7000);
+    if (grown_block == NULL) {
+        return 0;
+    }
+
+    for (index = 0; index < 5000; index++) {
+        if (grown_block[index] != (uint8_t)(index ^ 0x5A)) {
+            return 0;
+        }
+    }
+    kputs("heap realloc growth preservation test ok\n");
+
+    shrunk_block = krealloc(grown_block, 1024);
+    if (shrunk_block != grown_block) {
+        return 0;
+    }
+
+    for (index = 0; index < 1024; index++) {
+        if (shrunk_block[index] != (uint8_t)(index ^ 0x5A)) {
+            return 0;
+        }
+    }
+    kputs("heap realloc shrink-in-place test ok\n");
+
+    kfree(reused_block);
+    kfree(shrunk_block);
+
+    printk("heap test used: %d bytes\n", (int)kheap_used_bytes());
+    return 1;
+}
+
 void kmain(void) {
     uint64_t free_frames_before_test;
     uint64_t test_frame;
@@ -88,6 +166,12 @@ void kmain(void) {
         kputs("ERROR: VMM initialization failed\n");
     } else if (vmm_self_test()) {
         kputs("vmm map/translate/unmap test ok\n");
+
+        if (run_heap_test()) {
+            kputs("heap bare-metal allocator test ok\n");
+        } else {
+            kputs("ERROR: heap self-test failed\n");
+        }
     } else {
         kputs("ERROR: VMM self-test failed\n");
     }
