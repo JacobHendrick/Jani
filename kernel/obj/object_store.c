@@ -163,15 +163,18 @@ static int setup_store(
     uint8_t *cache_buffer,
     size_t cache_capacity,
     uint8_t *bitmap_buffer,
-    size_t bitmap_capacity
+    size_t bitmap_capacity,
+    uint8_t *arena_buffer,
+    size_t arena_capacity
 ) {
     if ((store == NULL) || (table_entries == NULL) ||
         (scratch_entries == NULL) || (cache_buffer == NULL) ||
-        (bitmap_buffer == NULL) ||
+        (bitmap_buffer == NULL) || (arena_buffer == NULL) ||
         (table_capacity == 0) ||
         (cache_capacity < OBJECT_HEADER_SIZE) ||
         (bitmap_capacity < bitmap_bytes_for(io.sector_count)) ||
         (((uintptr_t)cache_buffer % _Alignof(struct object_header)) != 0) ||
+        (((uintptr_t)arena_buffer % _Alignof(struct object_header)) != 0) ||
         (io.sector_count < OBJECT_STORE_FIRST_ALLOCATABLE_SECTOR) ||
         (io.read_sector == NULL) || (io.write_sector == NULL) ||
         (io.flush == NULL)) {
@@ -187,7 +190,118 @@ static int setup_store(
     store->cache_capacity = cache_capacity;
     store->bitmap_buffer = bitmap_buffer;
     store->bitmap_capacity = bitmap_capacity;
+    store->arena_buffer = arena_buffer;
+    store->arena_capacity = arena_capacity;
     return 1;
+}
+
+static void cache_remove_slot(struct object_store *store, size_t index) {
+    size_t hole_offset;
+    size_t hole_length;
+    size_t i;
+
+    hole_offset = store->cache_slots[index].offset;
+    hole_length = store->cache_slots[index].length;
+
+    memmove(store->arena_buffer + hole_offset,
+            store->arena_buffer + hole_offset + hole_length,
+            store->arena_used - (hole_offset + hole_length));
+    store->arena_used -= hole_length;
+
+    for (i = 0; i < store->cache_slot_count; i++) {
+        if (store->cache_slots[i].offset > hole_offset) {
+            store->cache_slots[i].offset -= hole_length;
+        }
+    }
+
+    store->cache_slots[index] =
+        store->cache_slots[store->cache_slot_count - 1];
+    store->cache_slot_count--;
+}
+
+static void cache_evict_lru(struct object_store *store) {
+    size_t victim;
+    size_t i;
+
+    if (store->cache_slot_count == 0) {
+        return;
+    }
+
+    victim = 0;
+    for (i = 1; i < store->cache_slot_count; i++) {
+        if (store->cache_slots[i].last_access <
+            store->cache_slots[victim].last_access) {
+            victim = i;
+        }
+    }
+
+    cache_remove_slot(store, victim);
+}
+
+static struct object_cache_slot *cache_find(
+    struct object_store *store,
+    struct object_id id,
+    uint64_t version
+) {
+    size_t i;
+
+    for (i = 0; i < store->cache_slot_count; i++) {
+        if ((store->cache_slots[i].version == version) &&
+            object_id_equal(store->cache_slots[i].id, id)) {
+            return &store->cache_slots[i];
+        }
+    }
+
+    return NULL;
+}
+
+static uint8_t *cache_insert(
+    struct object_store *store,
+    struct object_id id,
+    uint64_t version,
+    const uint8_t *bytes,
+    size_t length
+) {
+    struct object_cache_slot *slot;
+    uint8_t *result;
+    size_t span;
+    size_t i;
+
+    span = (length + (_Alignof(struct object_header) - 1u)) &
+           ~(size_t)(_Alignof(struct object_header) - 1u);
+
+    if ((length == 0) || (span > store->arena_capacity)) {
+        return NULL;
+    }
+
+    for (i = 0; i < store->cache_slot_count; i++) {
+        if (object_id_equal(store->cache_slots[i].id, id)) {
+            cache_remove_slot(store, i);
+            break;
+        }
+    }
+
+    while (store->cache_slot_count >= OBJECT_STORE_CACHE_SLOTS) {
+        cache_evict_lru(store);
+    }
+
+    while ((store->arena_used + span) > store->arena_capacity) {
+        cache_evict_lru(store);
+    }
+
+    result = store->arena_buffer + store->arena_used;
+    memcpy(result, bytes, length);
+
+    slot = &store->cache_slots[store->cache_slot_count];
+    slot->id = id;
+    slot->version = version;
+    slot->offset = store->arena_used;
+    slot->length = span;
+    slot->last_access = ++store->cache_clock;
+
+    store->arena_used += span;
+    store->cache_slot_count++;
+    return result;
 }
 
 static uint32_t superblock_checksum(struct disk_superblock *superblock) {
@@ -589,13 +703,16 @@ int object_store_format(
     uint8_t *cache_buffer,
     size_t cache_capacity,
     uint8_t *bitmap_buffer,
-    size_t bitmap_capacity
+    size_t bitmap_capacity,
+    uint8_t *arena_buffer,
+    size_t arena_capacity
 ) {
     uint8_t empty_sector[OBJECT_STORE_SECTOR_SIZE];
 
     if (!setup_store(store, io, table_entries, scratch_entries,
                      table_capacity, cache_buffer, cache_capacity,
-                     bitmap_buffer, bitmap_capacity)) {
+                     bitmap_buffer, bitmap_capacity,
+                     arena_buffer, arena_capacity)) {
         return 0;
     }
 
@@ -629,7 +746,9 @@ int object_store_mount(
     uint8_t *cache_buffer,
     size_t cache_capacity,
     uint8_t *bitmap_buffer,
-    size_t bitmap_capacity
+    size_t bitmap_capacity,
+    uint8_t *arena_buffer,
+    size_t arena_capacity
 ) {
     struct disk_superblock first;
     struct disk_superblock second;
@@ -639,7 +758,8 @@ int object_store_mount(
 
     if (!setup_store(store, io, table_entries, scratch_entries,
                      table_capacity, cache_buffer, cache_capacity,
-                     bitmap_buffer, bitmap_capacity) ||
+                     bitmap_buffer, bitmap_capacity,
+                     arena_buffer, arena_capacity) ||
         !io.read_sector(io.context, OBJECT_STORE_SUPERBLOCK_A,
                         (uint8_t *)&first) ||
         !io.read_sector(io.context, OBJECT_STORE_SUPERBLOCK_B,
@@ -795,13 +915,11 @@ int object_store_put(
         !write_table_generation(store, &candidate, table_sector)) {
         bitmap_clear_range(store, data_sector, data_sectors);
         bitmap_clear_range(store, table_sector, candidate.count);
-        store->cache_valid = 0;
         return 0;
     }
 
     generation = store->current_generation + 1;
     if (!write_wal_root(store, table_sector, candidate.count, generation)) {
-        store->cache_valid = 0;
         return 0;
     }
 
@@ -811,14 +929,11 @@ int object_store_put(
     store->current_table_sector = table_sector;
     store->current_generation = generation;
     if (!write_superblock(store) || !clear_wal(store)) {
-        store->cache_valid = 0;
         return 0;
     }
 
-    store->cache_id = id;
-    store->cache_version = entry.version;
-    store->cache_size = object_byte_count;
-    store->cache_valid = 1;
+    (void)cache_insert(store, id, entry.version, store->cache_buffer,
+                       object_byte_count);
     return 1;
 }
 
@@ -831,6 +946,9 @@ int object_store_get(
 ) {
     const struct object_table_entry *entry;
     const struct object_header *header;
+    struct object_cache_slot *slot;
+    const uint8_t *object_bytes;
+    uint8_t *cached;
     size_t object_byte_count;
     size_t sector_count;
     size_t index;
@@ -845,9 +963,10 @@ int object_store_get(
         return 0;
     }
 
-    if (store->cache_valid && object_id_equal(store->cache_id, id) &&
-        (store->cache_version == entry->version)) {
-        object_byte_count = store->cache_size;
+    slot = cache_find(store, id, entry->version);
+    if (slot != NULL) {
+        object_bytes = store->arena_buffer + slot->offset;
+        slot->last_access = ++store->cache_clock;
     } else {
         if ((entry->sector_count == 0) ||
             (entry->first_sector < OBJECT_STORE_FIRST_ALLOCATABLE_SECTOR) ||
@@ -862,7 +981,6 @@ int object_store_get(
         sector_count = (size_t)entry->sector_count;
         object_byte_count = sector_count * OBJECT_STORE_SECTOR_SIZE;
 
-        store->cache_valid = 0;
         for (index = 0; index < sector_count; index++) {
             if (!store->io.read_sector(
                     store->io.context,
@@ -872,25 +990,29 @@ int object_store_get(
                 return 0;
             }
         }
+
+        if (!object_header_validate(store->cache_buffer, object_byte_count)) {
+            return 0;
+        }
+
+        header = (const struct object_header *)store->cache_buffer;
+        if (!object_id_equal(header->id, id) ||
+            (header->version != entry->version)) {
+            return 0;
+        }
+
+        object_bytes = store->cache_buffer;
+        cached = cache_insert(store, id, entry->version, store->cache_buffer,
+                              object_byte_count);
+        if (cached != NULL) {
+            object_bytes = cached;
+        }
     }
 
-    if (!object_header_validate(store->cache_buffer, object_byte_count)) {
-        return 0;
-    }
-
-    header = (const struct object_header *)store->cache_buffer;
-    if (!object_id_equal(header->id, id) ||
-        (header->version != entry->version)) {
-        return 0;
-    }
-
-    store->cache_id = id;
-    store->cache_version = entry->version;
-    store->cache_size = object_byte_count;
-    store->cache_valid = 1;
+    header = (const struct object_header *)object_bytes;
 
     *header_out = *header;
-    *payload_out = store->cache_buffer + OBJECT_HEADER_SIZE;
+    *payload_out = object_bytes + OBJECT_HEADER_SIZE;
     *payload_size_out = (size_t)header->payload_size;
     return 1;
 }
@@ -998,7 +1120,6 @@ int object_store_snapshot_rollback(
     store->table.count = candidate.count;
     store->current_table_sector = table_sector;
     store->current_generation = generation;
-    store->cache_valid = 0;
 
     if (!write_superblock(store) || !clear_wal(store)) {
         return 0;

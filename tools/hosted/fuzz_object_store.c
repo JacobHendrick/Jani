@@ -8,6 +8,7 @@
 #define FUZZ_TABLE_CAPACITY 6u
 #define FUZZ_CACHE_BYTES 4096u
 #define FUZZ_BITMAP_BYTES ((FUZZ_DISK_SECTORS + 7u) / 8u)
+#define FUZZ_ARENA_BYTES 2048u
 #define FUZZ_ID_COUNT 6u
 #define FUZZ_PAYLOAD_LEN 16u
 
@@ -89,13 +90,15 @@ struct fuzz_store {
     struct object_table_entry scratch[FUZZ_TABLE_CAPACITY];
     _Alignas(16) uint8_t cache[FUZZ_CACHE_BYTES];
     uint8_t bitmap[FUZZ_BITMAP_BYTES];
+    _Alignas(16) uint8_t arena[FUZZ_ARENA_BYTES];
 };
 
 static int fuzz_mount(struct fuzz_store *handle, struct fuzz_disk *disk) {
     return object_store_mount(&handle->store, fuzz_io(disk), handle->entries,
                               handle->scratch, FUZZ_TABLE_CAPACITY,
                               handle->cache, sizeof(handle->cache),
-                              handle->bitmap, sizeof(handle->bitmap));
+                              handle->bitmap, sizeof(handle->bitmap),
+                              handle->arena, sizeof(handle->arena));
 }
 
 static unsigned fuzz_index_of(struct object_id id) {
@@ -187,7 +190,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     if (!object_store_format(&handle.store, fuzz_io(&disk), handle.entries,
                              handle.scratch, FUZZ_TABLE_CAPACITY,
                              handle.cache, sizeof(handle.cache),
-                             handle.bitmap, sizeof(handle.bitmap))) {
+                             handle.bitmap, sizeof(handle.bitmap),
+                             handle.arena, sizeof(handle.arena))) {
         return 0;
     }
 

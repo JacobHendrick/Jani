@@ -9,6 +9,16 @@
 
 #define OBJECT_STORE_SECTOR_SIZE 512u
 #define OBJECT_STORE_SNAPSHOT_LIMIT 8u
+#define OBJECT_STORE_CACHE_SLOTS 16u
+
+
+struct object_cache_slot {
+    struct object_id id;
+    uint64_t version;
+    size_t offset;
+    size_t length;
+    uint64_t last_access;
+};
 
 struct object_store_io {
     void *context;
@@ -32,10 +42,12 @@ struct object_store {
     size_t table_capacity;
     uint8_t *cache_buffer;
     size_t cache_capacity;
-    size_t cache_size;
-    struct object_id cache_id;
-    uint64_t cache_version;
-    int cache_valid;
+    uint8_t *arena_buffer;
+    size_t arena_capacity;
+    size_t arena_used;
+    struct object_cache_slot cache_slots[OBJECT_STORE_CACHE_SLOTS];
+    size_t cache_slot_count;
+    uint64_t cache_clock;
     uint8_t *bitmap_buffer;
     size_t bitmap_capacity;
     uint64_t next_sector;
@@ -55,7 +67,9 @@ int object_store_format(
     uint8_t *cache_buffer,
     size_t cache_capacity,
     uint8_t *bitmap_buffer,
-    size_t bitmap_capacity
+    size_t bitmap_capacity,
+    uint8_t *arena_buffer,
+    size_t arena_capacity
 );
 
 int object_store_mount(
@@ -67,7 +81,9 @@ int object_store_mount(
     uint8_t *cache_buffer,
     size_t cache_capacity,
     uint8_t *bitmap_buffer,
-    size_t bitmap_capacity
+    size_t bitmap_capacity,
+    uint8_t *arena_buffer,
+    size_t arena_capacity
 );
 
 int object_store_put(
