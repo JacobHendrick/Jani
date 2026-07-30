@@ -10,8 +10,14 @@ agreement the first instance of a pattern sets the house style. Jacob wrote
 this plan and will write the hosted virtqueue harness and Makefile wiring once
 the signatures below are settled, then review.
 
-**Status:** not started as of 2026-07-29. Everything above this line in Phase 2
-runs against an in-memory disk.
+**Status: IMPLEMENTED 2026-07-29.** Both decisions below were resolved as
+modern + polled, and all six stages are written and verified in QEMU (format,
+put, snapshot, mutate, rollback, and a clean remount on a second boot). Jacob
+wrote it at Jacob's direction, waiving the first-driver rule for this one; it
+still wants review and hardware verification. The prose below is kept as the
+design record. One thing the plan did not predict: the kernel had never
+enabled SSE, and the first struct-by-value call into the store took a #UD --
+see the devlog entry.
 
 ## What already exists
 

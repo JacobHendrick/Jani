@@ -169,4 +169,47 @@ disk. Transport decision: **modern virtio (1.0+) over MMIO, polled** — no
 legacy port-I/O path, no MSI-X until the Phase 4 driver-component model has
 somewhere to route interrupts.
 
+## 2026-07-29 (later) — virtio-blk, and the SSE trap that was always waiting
+
+Phase 2 is functionally complete: the object store runs on a real disk.
+Modern virtio over MMIO, polled — no legacy port-I/O path, and no MSI-X until
+Phase 4 has somewhere to route interrupts. PCI enumeration, capability walk,
+feature negotiation, split virtqueue, three-descriptor block requests.
+
+Verified in QEMU on an 8 MiB virtio-blk disk: format, put, snapshot, mutate,
+rollback. Then a second boot on the same image mounts the store and finds
+version 1 with its 3-byte payload intact. That second boot is the real
+result — it is the first evidence that a flush in this system actually
+reaches the platter, which every crash-safety claim depends on.
+
+FLUSH is a hard requirement at init, not a nicety. If the device does not
+offer `VIRTIO_BLK_F_FLUSH` the driver refuses to come up, because the WAL
+commit protocol's entire durability argument assumes flush is a barrier, and
+a store running without one is fiction that no hosted test can detect (both
+fake disks treat flush as a no-op returning success).
+
+**The bug that had been waiting since Phase 0:** the kernel image contained
+674 SSE instructions and never enabled SSE. Nothing had tripped it because
+nothing copied a struct big enough for the compiler to reach for `movups`.
+The first call into the store did — `object_store_io` is passed by value —
+and the kernel took a #UD. So the kernel had never been *able* to call the
+object store API; the hosted tests could not see this because Linux enables
+SSE for us.
+
+Fixed by keeping SSE out of kernel code rather than enabling it in CR0/CR4,
+which means interrupt handlers never have to save XMM state. Toolchain trap
+worth remembering: **`-mgeneral-regs-only` is accepted and silently ignored
+on x86** by this clang. It compiles, it looks right, it does nothing. The
+flags that work are `-mno-sse -mno-sse2 -mno-mmx`, and `-mcpu=x86_64-sse-
+sse2-mmx` for the Zig objects. Verified by counting `xmm` in the disassembly,
+which is the only way to know.
+
+Every request bounces through a single DMA page instead of mapping caller
+buffers directly, because `object_store_io` hands the driver arbitrary kernel
+pointers that can straddle a page boundary. One memcpy per sector, one whole
+class of bug gone.
+
+Still needs Jacob: real hardware, and crash-consistency under a kill
+mid-write. QEMU agreeing is not hardware agreeing.
+
 <!-- Next entry goes here -->
