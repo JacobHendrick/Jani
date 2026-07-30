@@ -240,6 +240,8 @@ int vmm_map_page(uint64_t virtual_address, uint64_t physical_address,
     *leaf_entry = physical_address | VMM_PAGE_PRESENT |
                   (flags & (VMM_PAGE_WRITABLE |
                             VMM_PAGE_USER |
+                            VMM_PAGE_WRITE_THROUGH |
+                            VMM_PAGE_CACHE_DISABLE |
                             VMM_PAGE_NO_EXECUTE));
     invalidate_page(virtual_address);
     return 1;

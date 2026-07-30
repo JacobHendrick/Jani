@@ -18,11 +18,13 @@ static struct memory_layout_region regions[MEMORY_LAYOUT_MAX_REGIONS] = {
       "object space" },
     { MEMORY_LAYOUT_HEAP_BASE, MEMORY_LAYOUT_HEAP_SIZE,
       "kernel heap" },
+    { MEMORY_LAYOUT_MMIO_BASE, MEMORY_LAYOUT_MMIO_SIZE,
+      "device mmio" },
     { MEMORY_LAYOUT_KERNEL_IMAGE_BASE, MEMORY_LAYOUT_KERNEL_IMAGE_SIZE,
       "kernel image" },
 };
 
-static uint64_t region_count = 3;
+static uint64_t region_count = 4;
 
 void memory_layout_register_hhdm(uint64_t base, uint64_t size) {
     if (region_count >= MEMORY_LAYOUT_MAX_REGIONS) {

@@ -6,6 +6,8 @@
 #define VMM_PAGE_PRESENT (1ULL << 0)
 #define VMM_PAGE_WRITABLE (1ULL << 1)
 #define VMM_PAGE_USER (1ULL << 2)
+#define VMM_PAGE_WRITE_THROUGH (1ULL << 3)
+#define VMM_PAGE_CACHE_DISABLE (1ULL << 4)
 #define VMM_PAGE_NO_EXECUTE (1ULL << 63)
 
 void vmm_init(void);

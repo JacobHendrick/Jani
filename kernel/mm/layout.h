@@ -23,6 +23,8 @@
  *                                 Phase 2 object versions
  *   slot  416      KERNEL HEAP    0xFFFFD00000000000, 512 GiB reserved,
  *                                 kmalloc's home
+ *   slot  417      DEVICE MMIO    0xFFFFD08000000000, 512 GiB reserved,
+ *                                 where PCI BARs are mapped uncached
  *   slot  511      KERNEL IMAGE   0xFFFFFFFF80000000 to the top of memory,
  *                                 set by linker.ld and -mcmodel=kernel
  *
@@ -33,6 +35,8 @@
 #define MEMORY_LAYOUT_OBJECT_SPACE_SIZE 0x0000400000000000ULL
 #define MEMORY_LAYOUT_HEAP_BASE         0xFFFFD00000000000ULL
 #define MEMORY_LAYOUT_HEAP_SIZE         0x0000008000000000ULL
+#define MEMORY_LAYOUT_MMIO_BASE         0xFFFFD08000000000ULL
+#define MEMORY_LAYOUT_MMIO_SIZE         0x0000008000000000ULL
 #define MEMORY_LAYOUT_KERNEL_IMAGE_BASE 0xFFFFFFFF80000000ULL
 #define MEMORY_LAYOUT_KERNEL_IMAGE_SIZE 0x0000000080000000ULL
 

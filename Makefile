@@ -34,6 +34,7 @@ MEMORY_MAP_OBJ := $(BUILD_DIR)/memory_map.o
 LAYOUT_OBJ := $(BUILD_DIR)/layout.o
 PMM_OBJ := $(BUILD_DIR)/pmm.o
 VMM_OBJ := $(BUILD_DIR)/vmm.o
+MMIO_OBJ := $(BUILD_DIR)/mmio.o
 HEAP_OBJ := $(BUILD_DIR)/heap.o
 FREE_LIST_OBJ := $(BUILD_DIR)/free_list.o
 HEAP_BACKEND_OBJ := $(BUILD_DIR)/heap_backend.o
@@ -42,10 +43,14 @@ OBJECT_TABLE_OBJ := $(BUILD_DIR)/object_table.o
 OBJECT_HEADER_VALIDATE_OBJ := $(BUILD_DIR)/object_header_validate.o
 WAL_VALIDATE_OBJ := $(BUILD_DIR)/wal_validate.o
 OBJECT_STORE_OBJ := $(BUILD_DIR)/object_store.o
+PCI_OBJ := $(BUILD_DIR)/pci.o
+VIRTIO_PCI_OBJ := $(BUILD_DIR)/virtio_pci.o
+VIRTQUEUE_OBJ := $(BUILD_DIR)/virtqueue.o
+VIRTIO_BLK_OBJ := $(BUILD_DIR)/virtio_blk.o
 SERIAL_OBJ := $(BUILD_DIR)/serial.o
 PRINTK_OBJ := $(BUILD_DIR)/printk.o
 STRING_OBJ := $(BUILD_DIR)/string.o
-KERNEL_OBJECTS := $(MAIN_OBJ) $(GDT_OBJ) $(IDT_OBJ) $(ISR_OBJ) $(INTERRUPTS_OBJ) $(PIC_OBJ) $(PIT_OBJ) $(KEYBOARD_OBJ) $(MEMORY_MAP_OBJ) $(LAYOUT_OBJ) $(PMM_OBJ) $(VMM_OBJ) $(HEAP_OBJ) $(FREE_LIST_OBJ) $(HEAP_BACKEND_OBJ) $(OBJECT_ID_OBJ) $(OBJECT_TABLE_OBJ) $(OBJECT_HEADER_VALIDATE_OBJ) $(WAL_VALIDATE_OBJ) $(OBJECT_STORE_OBJ) $(SERIAL_OBJ) $(PRINTK_OBJ) $(STRING_OBJ)
+KERNEL_OBJECTS := $(MAIN_OBJ) $(GDT_OBJ) $(IDT_OBJ) $(ISR_OBJ) $(INTERRUPTS_OBJ) $(PIC_OBJ) $(PIT_OBJ) $(KEYBOARD_OBJ) $(MEMORY_MAP_OBJ) $(LAYOUT_OBJ) $(PMM_OBJ) $(VMM_OBJ) $(MMIO_OBJ) $(HEAP_OBJ) $(FREE_LIST_OBJ) $(HEAP_BACKEND_OBJ) $(OBJECT_ID_OBJ) $(OBJECT_TABLE_OBJ) $(OBJECT_HEADER_VALIDATE_OBJ) $(WAL_VALIDATE_OBJ) $(OBJECT_STORE_OBJ) $(PCI_OBJ) $(VIRTIO_PCI_OBJ) $(VIRTQUEUE_OBJ) $(VIRTIO_BLK_OBJ) $(SERIAL_OBJ) $(PRINTK_OBJ) $(STRING_OBJ)
 
 KERNEL_SOURCE := kernel/boot/main.c
 GDT_SOURCE := kernel/arch/gdt.c
@@ -59,6 +64,7 @@ MEMORY_MAP_SOURCE := kernel/mm/memory_map.c
 LAYOUT_SOURCE := kernel/mm/layout.c
 PMM_SOURCE := kernel/mm/pmm.c
 VMM_SOURCE := kernel/mm/vmm.c
+MMIO_SOURCE := kernel/mm/mmio.c
 HEAP_SOURCE := kernel/mm/heap.c
 FREE_LIST_SOURCE := kernel/mm/free_list.c
 HEAP_BACKEND_SOURCE := kernel/mm/heap_backend.c
@@ -67,6 +73,10 @@ OBJECT_TABLE_SOURCE := kernel/obj/object_table.c
 OBJECT_HEADER_VALIDATE_SOURCE := kernel/obj/object_header_validate.zig
 WAL_VALIDATE_SOURCE := kernel/obj/wal_validate.zig
 OBJECT_STORE_SOURCE := kernel/obj/object_store.c
+PCI_SOURCE := kernel/drivers/pci.c
+VIRTIO_PCI_SOURCE := kernel/drivers/virtio_pci.c
+VIRTQUEUE_SOURCE := kernel/drivers/virtqueue.c
+VIRTIO_BLK_SOURCE := kernel/drivers/virtio_blk.c
 SERIAL_SOURCE := kernel/drivers/serial.c
 PRINTK_SOURCE := kernel/lib/printk.c
 STRING_SOURCE := kernel/lib/string.c
@@ -80,6 +90,9 @@ CFLAGS := -target x86_64-freestanding-none \
 	-fno-pie \
 	-mcmodel=kernel \
 	-mno-red-zone \
+	-mno-sse \
+	-mno-sse2 \
+	-mno-mmx \
 	-Wall \
 	-Wextra \
 	-Werror \
@@ -87,6 +100,8 @@ CFLAGS := -target x86_64-freestanding-none \
 	-g \
 	-fsanitize=undefined \
 	-fsanitize-trap=undefined
+
+ZIG_KERNEL_TARGET := -target x86_64-freestanding-none -mcpu=x86_64-sse-sse2-mmx
 
 LDFLAGS := -T $(LINKER_SCRIPT)
 
@@ -154,6 +169,26 @@ $(LAYOUT_OBJ): $(LAYOUT_SOURCE) Makefile
 	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
 	$(ZIG_ENV) $(CC) $(CFLAGS) -c $(LAYOUT_SOURCE) -o $(LAYOUT_OBJ)
 
+$(MMIO_OBJ): $(MMIO_SOURCE) Makefile
+	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(CC) $(CFLAGS) -c $(MMIO_SOURCE) -o $(MMIO_OBJ)
+
+$(PCI_OBJ): $(PCI_SOURCE) Makefile
+	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(CC) $(CFLAGS) -c $(PCI_SOURCE) -o $(PCI_OBJ)
+
+$(VIRTIO_PCI_OBJ): $(VIRTIO_PCI_SOURCE) Makefile
+	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(CC) $(CFLAGS) -c $(VIRTIO_PCI_SOURCE) -o $(VIRTIO_PCI_OBJ)
+
+$(VIRTQUEUE_OBJ): $(VIRTQUEUE_SOURCE) Makefile
+	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(CC) $(CFLAGS) -c $(VIRTQUEUE_SOURCE) -o $(VIRTQUEUE_OBJ)
+
+$(VIRTIO_BLK_OBJ): $(VIRTIO_BLK_SOURCE) Makefile
+	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(CC) $(CFLAGS) -c $(VIRTIO_BLK_SOURCE) -o $(VIRTIO_BLK_OBJ)
+
 $(PMM_OBJ): $(PMM_SOURCE) Makefile
 	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
 	$(ZIG_ENV) $(CC) $(CFLAGS) -c $(PMM_SOURCE) -o $(PMM_OBJ)
@@ -184,11 +219,11 @@ $(OBJECT_TABLE_OBJ): $(OBJECT_TABLE_SOURCE) Makefile
 
 $(OBJECT_HEADER_VALIDATE_OBJ): $(OBJECT_HEADER_VALIDATE_SOURCE) Makefile
 	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
-	$(ZIG_ENV) $(ZIG) build-obj -target x86_64-freestanding-none -O Debug $(OBJECT_HEADER_VALIDATE_SOURCE) -femit-bin=$(OBJECT_HEADER_VALIDATE_OBJ)
+	$(ZIG_ENV) $(ZIG) build-obj $(ZIG_KERNEL_TARGET) -O Debug $(OBJECT_HEADER_VALIDATE_SOURCE) -femit-bin=$(OBJECT_HEADER_VALIDATE_OBJ)
 
 $(WAL_VALIDATE_OBJ): $(WAL_VALIDATE_SOURCE) Makefile
 	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
-	$(ZIG_ENV) $(ZIG) build-obj -target x86_64-freestanding-none -O Debug $(WAL_VALIDATE_SOURCE) -femit-bin=$(WAL_VALIDATE_OBJ)
+	$(ZIG_ENV) $(ZIG) build-obj $(ZIG_KERNEL_TARGET) -O Debug $(WAL_VALIDATE_SOURCE) -femit-bin=$(WAL_VALIDATE_OBJ)
 
 $(OBJECT_STORE_OBJ): $(OBJECT_STORE_SOURCE) Makefile
 	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
