@@ -391,11 +391,12 @@ kernel: $(KERNEL_ELF)
 
 iso: $(ISO_IMAGE)
 
-$(ISO_IMAGE): $(KERNEL_ELF) $(LIMINE_CONFIG)
+$(ISO_IMAGE): $(KERNEL_ELF) $(LIMINE_CONFIG) $(HELLO_WASM)
 	mkdir -p $(ISO_ROOT)/boot
 	mkdir -p $(ISO_ROOT)/boot/limine
 	mkdir -p $(ISO_ROOT)/EFI/BOOT
 	cp $(KERNEL_ELF) $(ISO_ROOT)/boot/jani.elf
+	cp $(HELLO_WASM) $(ISO_ROOT)/boot/hello.wasm
 	cp $(LIMINE_CONFIG) $(ISO_ROOT)/boot/limine.conf
 	cp $(LIMINE_DIR)/limine-bios.sys $(ISO_ROOT)/boot/limine/
 	cp $(LIMINE_DIR)/limine-bios-cd.bin $(ISO_ROOT)/boot/limine/
