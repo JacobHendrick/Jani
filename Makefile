@@ -112,13 +112,18 @@ TEST_OBJECT_TABLE_BIN := $(BUILD_DIR)/test_object_table
 TEST_OBJECT_HEADER_BIN := $(BUILD_DIR)/test_object_header
 TEST_WAL_BIN := $(BUILD_DIR)/test_wal
 TEST_OBJECT_STORE_BIN := $(BUILD_DIR)/test_object_store
+TEST_WASM_SHIM_BIN := $(BUILD_DIR)/test_wasm_shim
 OBJECT_HEADER_VALIDATE_HOSTED_OBJ := $(BUILD_DIR)/object_header_validate_hosted.o
 WAL_VALIDATE_HOSTED_OBJ := $(BUILD_DIR)/wal_validate_hosted.o
 FUZZ_HEAP_BIN := $(BUILD_DIR)/fuzz_heap
 FUZZ_OBJECT_STORE_BIN := $(BUILD_DIR)/fuzz_object_store
+FUZZ_WASM_SHIM_BIN := $(BUILD_DIR)/fuzz_wasm_shim
+WASM_SHIM_SOURCES := kernel/wasm/shim/string.c kernel/wasm/shim/stdio.c \
+	kernel/wasm/shim/stdlib.c kernel/wasm/shim/math.c
 
 .PHONY: all check-tools kernel iso run run-debug test fuzz-heap \
-	fuzz-object-store model-check model-check-negative crash-test clean
+	fuzz-object-store fuzz-wasm-shim model-check model-check-negative \
+	crash-test clean
 
 all: iso
 
@@ -276,13 +281,14 @@ $(ISO_IMAGE): $(KERNEL_ELF) $(LIMINE_CONFIG)
 		-o $(ISO_IMAGE)
 	$(LIMINE_DIR)/limine bios-install $(ISO_IMAGE)
 
-test: $(TEST_PMM_BIN) $(TEST_HEAP_BIN) $(TEST_OBJECT_TABLE_BIN) $(TEST_OBJECT_HEADER_BIN) $(TEST_WAL_BIN) $(TEST_OBJECT_STORE_BIN)
+test: $(TEST_PMM_BIN) $(TEST_HEAP_BIN) $(TEST_OBJECT_TABLE_BIN) $(TEST_OBJECT_HEADER_BIN) $(TEST_WAL_BIN) $(TEST_OBJECT_STORE_BIN) $(TEST_WASM_SHIM_BIN)
 	$(TEST_PMM_BIN)
 	$(TEST_HEAP_BIN)
 	$(TEST_OBJECT_TABLE_BIN)
 	$(TEST_OBJECT_HEADER_BIN)
 	$(TEST_WAL_BIN)
 	$(TEST_OBJECT_STORE_BIN)
+	$(TEST_WASM_SHIM_BIN)
 
 $(TEST_PMM_BIN): $(PMM_SOURCE) $(HOSTED_DIR)/test_pmm.c $(HOSTED_DIR)/stubs.c $(HOSTED_DIR)/fake_memory_map.c $(HOSTED_DIR)/fake_memory_map.h $(HOSTED_DIR)/check.h Makefile
 	mkdir -p $(BUILD_DIR)
@@ -319,6 +325,18 @@ $(TEST_OBJECT_STORE_BIN): $(OBJECT_ID_SOURCE) $(OBJECT_TABLE_SOURCE) $(OBJECT_ST
 $(FUZZ_HEAP_BIN): $(HEAP_SOURCE) $(FREE_LIST_SOURCE) $(HOSTED_DIR)/heap_backend_hosted.c $(HOSTED_DIR)/hosted_heap.h $(HOSTED_DIR)/fuzz_heap.c Makefile
 	mkdir -p $(BUILD_DIR)
 	$(HOST_CC) $(FUZZ_CFLAGS) $(HEAP_SOURCE) $(FREE_LIST_SOURCE) $(HOSTED_DIR)/heap_backend_hosted.c $(HOSTED_DIR)/fuzz_heap.c -o $(FUZZ_HEAP_BIN)
+
+$(TEST_WASM_SHIM_BIN): $(WASM_SHIM_SOURCES) $(HOSTED_DIR)/test_wasm_shim.c $(HOSTED_DIR)/check.h kernel/wasm/shim/jani_libc.h Makefile
+	mkdir -p $(BUILD_DIR)
+	$(HOST_CC) $(HOST_CFLAGS) -DJANI_HOSTED $(WASM_SHIM_SOURCES) $(HOSTED_DIR)/test_wasm_shim.c -o $(TEST_WASM_SHIM_BIN)
+
+$(FUZZ_WASM_SHIM_BIN): $(WASM_SHIM_SOURCES) $(HOSTED_DIR)/fuzz_wasm_shim.c kernel/wasm/shim/jani_libc.h Makefile
+	mkdir -p $(BUILD_DIR)
+	$(HOST_CC) $(FUZZ_CFLAGS) -DJANI_HOSTED $(WASM_SHIM_SOURCES) $(HOSTED_DIR)/fuzz_wasm_shim.c -o $(FUZZ_WASM_SHIM_BIN)
+
+fuzz-wasm-shim: $(FUZZ_WASM_SHIM_BIN)
+	mkdir -p $(BUILD_DIR)/fuzz-corpus-wasm-shim
+	$(FUZZ_WASM_SHIM_BIN) $(BUILD_DIR)/fuzz-corpus-wasm-shim -runs=$(FUZZ_RUNS) -max_len=256 -timeout=5
 
 fuzz-heap: $(FUZZ_HEAP_BIN)
 	mkdir -p $(BUILD_DIR)/fuzz-corpus
