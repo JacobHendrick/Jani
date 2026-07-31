@@ -2,8 +2,11 @@
 
 .global _start
 .extern kmain
+.extern kernel_stack_top
 
 _start:
+    movq %rsp, kernel_stack_top(%rip)
+
     movq %cr0, %rax
     andq $-13, %rax
     orq $2, %rax

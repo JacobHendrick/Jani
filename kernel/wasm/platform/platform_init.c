@@ -1,11 +1,9 @@
 #include "platform_api_vmcore.h"
 #include "platform_api_extension.h"
 
+#include "../../arch/stack.h"
 #include "../../drivers/pit.h"
 #include "../../mm/heap.h"
-
-#define JANI_PIT_HZ 100
-#define JANI_US_PER_TICK (1000000 / JANI_PIT_HZ)
 
 int
 bh_platform_init(void)
@@ -58,7 +56,7 @@ os_vprintf(const char *format, va_list ap)
 uint64
 os_time_get_boot_us(void)
 {
-    return pit_get_ticks() * (uint64)JANI_US_PER_TICK;
+    return pit_get_microseconds();
 }
 
 uint64
@@ -76,7 +74,7 @@ os_self_thread(void)
 uint8 *
 os_thread_get_stack_boundary(void)
 {
-    return NULL;
+    return (uint8 *)kernel_stack_limit();
 }
 
 void
