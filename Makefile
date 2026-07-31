@@ -113,16 +113,21 @@ TEST_OBJECT_HEADER_BIN := $(BUILD_DIR)/test_object_header
 TEST_WAL_BIN := $(BUILD_DIR)/test_wal
 TEST_OBJECT_STORE_BIN := $(BUILD_DIR)/test_object_store
 TEST_WASM_SHIM_BIN := $(BUILD_DIR)/test_wasm_shim
+TEST_WASM_MODULE_BIN := $(BUILD_DIR)/test_wasm_module
+MODULE_VALIDATE_HOSTED_OBJ := $(BUILD_DIR)/module_validate_hosted.o
 OBJECT_HEADER_VALIDATE_HOSTED_OBJ := $(BUILD_DIR)/object_header_validate_hosted.o
 WAL_VALIDATE_HOSTED_OBJ := $(BUILD_DIR)/wal_validate_hosted.o
 FUZZ_HEAP_BIN := $(BUILD_DIR)/fuzz_heap
 FUZZ_OBJECT_STORE_BIN := $(BUILD_DIR)/fuzz_object_store
 FUZZ_WASM_SHIM_BIN := $(BUILD_DIR)/fuzz_wasm_shim
+FUZZ_WASM_MODULE_BIN := $(BUILD_DIR)/fuzz_wasm_module
+MODULE_VALIDATE_SOURCE := kernel/wasm/module_validate.zig
+MODULE_VALIDATE_OBJ := $(BUILD_DIR)/module_validate.o
 WASM_SHIM_SOURCES := kernel/wasm/shim/string.c kernel/wasm/shim/stdio.c \
 	kernel/wasm/shim/stdlib.c kernel/wasm/shim/math.c
 
 .PHONY: all check-tools kernel iso run run-debug test fuzz-heap \
-	fuzz-object-store fuzz-wasm-shim model-check model-check-negative \
+	fuzz-object-store fuzz-wasm-shim fuzz-wasm-module model-check model-check-negative \
 	crash-test clean
 
 all: iso
@@ -281,7 +286,7 @@ $(ISO_IMAGE): $(KERNEL_ELF) $(LIMINE_CONFIG)
 		-o $(ISO_IMAGE)
 	$(LIMINE_DIR)/limine bios-install $(ISO_IMAGE)
 
-test: $(TEST_PMM_BIN) $(TEST_HEAP_BIN) $(TEST_OBJECT_TABLE_BIN) $(TEST_OBJECT_HEADER_BIN) $(TEST_WAL_BIN) $(TEST_OBJECT_STORE_BIN) $(TEST_WASM_SHIM_BIN)
+test: $(TEST_PMM_BIN) $(TEST_HEAP_BIN) $(TEST_OBJECT_TABLE_BIN) $(TEST_OBJECT_HEADER_BIN) $(TEST_WAL_BIN) $(TEST_OBJECT_STORE_BIN) $(TEST_WASM_SHIM_BIN) $(TEST_WASM_MODULE_BIN)
 	$(TEST_PMM_BIN)
 	$(TEST_HEAP_BIN)
 	$(TEST_OBJECT_TABLE_BIN)
@@ -289,6 +294,7 @@ test: $(TEST_PMM_BIN) $(TEST_HEAP_BIN) $(TEST_OBJECT_TABLE_BIN) $(TEST_OBJECT_HE
 	$(TEST_WAL_BIN)
 	$(TEST_OBJECT_STORE_BIN)
 	$(TEST_WASM_SHIM_BIN)
+	$(TEST_WASM_MODULE_BIN)
 
 $(TEST_PMM_BIN): $(PMM_SOURCE) $(HOSTED_DIR)/test_pmm.c $(HOSTED_DIR)/stubs.c $(HOSTED_DIR)/fake_memory_map.c $(HOSTED_DIR)/fake_memory_map.h $(HOSTED_DIR)/check.h Makefile
 	mkdir -p $(BUILD_DIR)
@@ -333,6 +339,40 @@ $(TEST_WASM_SHIM_BIN): $(WASM_SHIM_SOURCES) $(HOSTED_DIR)/test_wasm_shim.c $(HOS
 $(FUZZ_WASM_SHIM_BIN): $(WASM_SHIM_SOURCES) $(HOSTED_DIR)/fuzz_wasm_shim.c kernel/wasm/shim/jani_libc.h Makefile
 	mkdir -p $(BUILD_DIR)
 	$(HOST_CC) $(FUZZ_CFLAGS) -DJANI_HOSTED $(WASM_SHIM_SOURCES) $(HOSTED_DIR)/fuzz_wasm_shim.c -o $(FUZZ_WASM_SHIM_BIN)
+
+$(MODULE_VALIDATE_HOSTED_OBJ): $(MODULE_VALIDATE_SOURCE) Makefile
+	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(ZIG) build-obj -O Debug $(MODULE_VALIDATE_SOURCE) -femit-bin=$(MODULE_VALIDATE_HOSTED_OBJ)
+
+$(TEST_WASM_MODULE_BIN): $(MODULE_VALIDATE_HOSTED_OBJ) $(HOSTED_DIR)/test_wasm_module.c $(HOSTED_DIR)/check.h kernel/wasm/module.h Makefile
+	mkdir -p $(BUILD_DIR)
+	$(HOST_CC) $(HOST_CFLAGS) $(MODULE_VALIDATE_HOSTED_OBJ) $(HOSTED_DIR)/test_wasm_module.c -o $(TEST_WASM_MODULE_BIN)
+
+$(FUZZ_WASM_MODULE_BIN): $(MODULE_VALIDATE_HOSTED_OBJ) $(HOSTED_DIR)/fuzz_wasm_module.c kernel/wasm/module.h Makefile
+	mkdir -p $(BUILD_DIR)
+	$(HOST_CC) $(FUZZ_CFLAGS) $(MODULE_VALIDATE_HOSTED_OBJ) $(HOSTED_DIR)/fuzz_wasm_module.c -o $(FUZZ_WASM_MODULE_BIN)
+
+# Seeded with a valid module: random bytes essentially never produce the
+# \0asm magic, so without a seed the fuzzer only ever exercises rejection
+# and never reaches the section parser that actually walks untrusted lengths.
+#
+# HONEST SCOPE: the validator is a Zig object and is NOT instrumented for
+# libFuzzer -- coverage stays flat at 8 whether or not the seed is present,
+# because libFuzzer only sees the C harness. Zig's -ffuzz drives Zig's own
+# fuzzer, not this one. So this campaign is random testing, not coverage-
+# guided fuzzing. What still protects us is Zig's Debug-mode runtime safety:
+# an out-of-bounds index or integer overflow inside the validator panics and
+# aborts the run. The same limitation applies to fuzz-object-store, which
+# links the header and WAL validators the same way.
+fuzz-wasm-module: $(FUZZ_WASM_MODULE_BIN)
+	mkdir -p $(BUILD_DIR)/fuzz-corpus-wasm-module
+	printf '\000asm\001\000\000\000\001\002\252\273\003\000' \
+	  > $(BUILD_DIR)/fuzz-corpus-wasm-module/seed-valid
+	$(FUZZ_WASM_MODULE_BIN) $(BUILD_DIR)/fuzz-corpus-wasm-module -runs=$(FUZZ_RUNS) -max_len=1024 -timeout=5
+
+$(MODULE_VALIDATE_OBJ): $(MODULE_VALIDATE_SOURCE) Makefile
+	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(ZIG) build-obj $(ZIG_KERNEL_TARGET) -O Debug $(MODULE_VALIDATE_SOURCE) -femit-bin=$(MODULE_VALIDATE_OBJ)
 
 fuzz-wasm-shim: $(FUZZ_WASM_SHIM_BIN)
 	mkdir -p $(BUILD_DIR)/fuzz-corpus-wasm-shim
