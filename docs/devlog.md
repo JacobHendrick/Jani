@@ -212,4 +212,39 @@ class of bug gone.
 Still needs Jacob: real hardware, and crash-consistency under a kill
 mid-write. QEMU agreeing is not hardware agreeing.
 
+## 2026-07-31 — Phase 2 milestone gate: crash test in QEMU
+
+`make crash-test` closes the blueprint's Phase 2 milestone. It boots the
+kernel against a persistent virtio-blk image, kills QEMU at a random moment
+during a write workload, and makes the *next* boot the check: mount, then
+verify every table entry is readable, its header version matches the table,
+and its payload matches the pattern that version implies. 20 cycles pass, ~190
+interrupted workload rounds.
+
+The kernel demo grew a self-verifying workload (4 objects, payload derived
+from version) and periodic `object_store_collect`, so GC runs under crash too.
+
+Two things worth writing down.
+
+**The verifier has teeth, checked rather than assumed.** Corrupting sectors
+3-10 changed nothing — those had become stale COW versions, correctly ignored.
+Only when I found every object header on disk by its magic and flipped a
+payload byte in each did it fail, with `entry 0 is not readable`. Good: it
+means the check tracks live data, not whatever happens to be lying around.
+
+**Killing QEMU is not a power cut, and I can prove it.** With
+`CACHE_MODE=unsafe` — QEMU discarding every flush request outright — the crash
+test still passes every cycle, because the host page cache keeps writes
+regardless of what the guest asked for. So this gate covers crash-consistency
+of the commit *sequence*, unmountable stores, torn objects, and cross-object
+clobbering. It does **not** cover whether flush is a real durability barrier.
+A driver whose flush did nothing would pass. That assumption is now the single
+largest unverified thing in the store, it needs real power loss on real
+hardware, and everything `WalCommit.tla` proves rests on it.
+
+Also: the first version of the harness hung forever, because the kernel never
+halts — it falls into the timer tick loop — and the final verification boot
+had no kill. Every boot is now bounded, either by the chosen kill moment or by
+polling the serial log for a verdict.
+
 <!-- Next entry goes here -->

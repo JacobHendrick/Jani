@@ -13,6 +13,7 @@ HOST_CFLAGS := -Wall -Wextra -Werror -g -O1 \
 	-fsanitize=address,undefined -fno-omit-frame-pointer
 FUZZ_CFLAGS := $(HOST_CFLAGS) -fsanitize=fuzzer
 FUZZ_RUNS ?= 10000
+CRASH_CYCLES ?= 25
 
 BUILD_DIR := build
 ISO_ROOT := $(BUILD_DIR)/iso_root
@@ -118,7 +119,7 @@ FUZZ_HEAP_BIN := $(BUILD_DIR)/fuzz_heap
 FUZZ_OBJECT_STORE_BIN := $(BUILD_DIR)/fuzz_object_store
 
 .PHONY: all check-tools kernel iso run run-debug test fuzz-heap \
-	fuzz-object-store model-check model-check-negative clean
+	fuzz-object-store model-check model-check-negative crash-test clean
 
 all: iso
 
@@ -333,6 +334,9 @@ run: $(ISO_IMAGE)
 
 run-debug: $(ISO_IMAGE)
 	$(QEMU) $(QEMU_FLAGS) -cdrom $(ISO_IMAGE) -serial stdio -s -S
+
+crash-test: $(ISO_IMAGE)
+	tools/crash_test_qemu.sh $(CRASH_CYCLES)
 
 clean:
 	rm -rf $(BUILD_DIR)
