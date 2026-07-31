@@ -128,10 +128,68 @@ MODULE_VALIDATE_SOURCE := kernel/wasm/module_validate.zig
 MODULE_VALIDATE_OBJ := $(BUILD_DIR)/module_validate.o
 WASM_SHIM_SOURCES := kernel/wasm/shim/string.c kernel/wasm/shim/stdio.c \
 	kernel/wasm/shim/stdlib.c kernel/wasm/shim/math.c
+WASM_SHIM_OBJECTS := $(BUILD_DIR)/shim_string.o $(BUILD_DIR)/shim_stdio.o \
+	$(BUILD_DIR)/shim_stdlib.o $(BUILD_DIR)/shim_math.o
+
+# --- WAMR (Phase 3 slice 1, spec D3.5) ---------------------------------------
+# Only the files the interpreter-only configuration actually compiles are
+# vendored, so the wildcards below are the file list. `make verify-wamr`
+# re-downloads the pinned tarball and proves every vendored byte matches it.
+WAMR_DIR := third_party/wamr
+WAMR_VERSION := WAMR-2.4.5
+WAMR_URL := https://github.com/bytecodealliance/wasm-micro-runtime/archive/refs/tags/$(WAMR_VERSION).tar.gz
+WAMR_SHA256 := 1ab09d51099f276ca4a1d6629f6b589aab2bd0caa01445e05031a4bed22c199b
+
+WAMR_COMMON_DIR := $(WAMR_DIR)/core/iwasm/common
+WAMR_INTERP_DIR := $(WAMR_DIR)/core/iwasm/interpreter
+WAMR_UTILS_DIR := $(WAMR_DIR)/core/shared/utils
+WAMR_MEMALLOC_DIR := $(WAMR_DIR)/core/shared/mem-alloc
+WAMR_EMS_DIR := $(WAMR_DIR)/core/shared/mem-alloc/ems
+WAMR_PLATFORM_DIR := kernel/wasm/platform
+
+WAMR_C_SOURCES := $(wildcard $(WAMR_COMMON_DIR)/*.c) \
+	$(wildcard $(WAMR_INTERP_DIR)/*.c) \
+	$(wildcard $(WAMR_UTILS_DIR)/*.c) \
+	$(wildcard $(WAMR_MEMALLOC_DIR)/*.c) \
+	$(wildcard $(WAMR_EMS_DIR)/*.c)
+
+WAMR_OBJECTS := $(addprefix $(BUILD_DIR)/wamr/,$(notdir $(WAMR_C_SOURCES:.c=.o))) \
+	$(BUILD_DIR)/wamr/invokeNative_em64.o
+WAMR_PLATFORM_OBJ := $(BUILD_DIR)/wamr/platform_init.o
+
+WAMR_INCLUDES := -I$(WAMR_DIR)/core/shared/platform/include \
+	-I$(WAMR_PLATFORM_DIR) \
+	-I$(WAMR_UTILS_DIR) \
+	-I$(WAMR_DIR)/core/iwasm/include \
+	-I$(WAMR_COMMON_DIR) \
+	-I$(WAMR_INTERP_DIR) \
+	-I$(WAMR_MEMALLOC_DIR) \
+	-Ikernel/wasm/shim/include
+
+WAMR_DEFINES := -DWASM_ENABLE_INTERP=1 \
+	-DBH_MALLOC=wasm_runtime_malloc \
+	-DBH_FREE=wasm_runtime_free \
+	-DBH_PLATFORM_JANI
+
+# -Werror stays on so a genuinely new warning in vendored code still stops the
+# build; the two suppressed categories are dead parameters left behind by the
+# feature flags we turn off, and appear in upstream as shipped.
+WAMR_CFLAGS := $(CFLAGS) -Wno-unused-parameter -Wno-unused-variable
+
+# invokeNative_em64.s is lowercase .s, so clang does not run the preprocessor
+# and rejects the C-only flags in CFLAGS as unused under -Werror. It is the
+# hand-written SysV trampoline that marshals wasm operands into registers for
+# a host call, so it must be assembled, not skipped.
+WAMR_ASFLAGS := -target x86_64-freestanding-none -g
+
+# Appended, not folded into the KERNEL_OBJECTS assignment above: that uses :=
+# and is evaluated before this block exists, so an inline reference there
+# expands to nothing and links a WAMR-less kernel without complaining.
+KERNEL_OBJECTS += $(WASM_SHIM_OBJECTS) $(WAMR_PLATFORM_OBJ) $(WAMR_OBJECTS)
 
 .PHONY: all check-tools kernel iso run run-debug test fuzz-heap \
 	fuzz-object-store fuzz-wasm-shim fuzz-wasm-module model-check model-check-negative \
-	crash-test hello-wasm clean
+	crash-test hello-wasm verify-wamr clean
 
 all: iso
 
@@ -257,6 +315,67 @@ $(PRINTK_OBJ): $(PRINTK_SOURCE) Makefile
 $(STRING_OBJ): $(STRING_SOURCE) Makefile
 	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
 	$(ZIG_ENV) $(CC) $(CFLAGS) -c $(STRING_SOURCE) -o $(STRING_OBJ)
+
+$(BUILD_DIR)/shim_string.o: kernel/wasm/shim/string.c Makefile
+	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(CC) $(CFLAGS) -c kernel/wasm/shim/string.c -o $@
+
+$(BUILD_DIR)/shim_stdio.o: kernel/wasm/shim/stdio.c Makefile
+	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(CC) $(CFLAGS) -c kernel/wasm/shim/stdio.c -o $@
+
+$(BUILD_DIR)/shim_stdlib.o: kernel/wasm/shim/stdlib.c Makefile
+	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(CC) $(CFLAGS) -c kernel/wasm/shim/stdlib.c -o $@
+
+$(BUILD_DIR)/shim_math.o: kernel/wasm/shim/math.c Makefile
+	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(CC) $(CFLAGS) -c kernel/wasm/shim/math.c -o $@
+
+$(BUILD_DIR)/wamr/%.o: $(WAMR_COMMON_DIR)/%.c Makefile
+	mkdir -p $(BUILD_DIR)/wamr $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(CC) $(WAMR_CFLAGS) $(WAMR_DEFINES) $(WAMR_INCLUDES) -c $< -o $@
+
+$(BUILD_DIR)/wamr/%.o: $(WAMR_INTERP_DIR)/%.c Makefile
+	mkdir -p $(BUILD_DIR)/wamr $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(CC) $(WAMR_CFLAGS) $(WAMR_DEFINES) $(WAMR_INCLUDES) -c $< -o $@
+
+$(BUILD_DIR)/wamr/%.o: $(WAMR_UTILS_DIR)/%.c Makefile
+	mkdir -p $(BUILD_DIR)/wamr $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(CC) $(WAMR_CFLAGS) $(WAMR_DEFINES) $(WAMR_INCLUDES) -c $< -o $@
+
+$(BUILD_DIR)/wamr/%.o: $(WAMR_MEMALLOC_DIR)/%.c Makefile
+	mkdir -p $(BUILD_DIR)/wamr $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(CC) $(WAMR_CFLAGS) $(WAMR_DEFINES) $(WAMR_INCLUDES) -c $< -o $@
+
+$(BUILD_DIR)/wamr/%.o: $(WAMR_EMS_DIR)/%.c Makefile
+	mkdir -p $(BUILD_DIR)/wamr $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(CC) $(WAMR_CFLAGS) $(WAMR_DEFINES) $(WAMR_INCLUDES) -c $< -o $@
+
+$(BUILD_DIR)/wamr/invokeNative_em64.o: $(WAMR_COMMON_DIR)/arch/invokeNative_em64.s Makefile
+	mkdir -p $(BUILD_DIR)/wamr $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(CC) $(WAMR_ASFLAGS) -c $< -o $@
+
+$(WAMR_PLATFORM_OBJ): $(WAMR_PLATFORM_DIR)/platform_init.c $(WAMR_PLATFORM_DIR)/platform_internal.h Makefile
+	mkdir -p $(BUILD_DIR)/wamr $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(CC) $(CFLAGS) $(WAMR_DEFINES) $(WAMR_INCLUDES) -c $< -o $@
+
+verify-wamr:
+	rm -rf $(BUILD_DIR)/wamr-verify
+	mkdir -p $(BUILD_DIR)/wamr-verify
+	curl -fL -o $(BUILD_DIR)/wamr-verify/wamr.tar.gz $(WAMR_URL)
+	echo "$(WAMR_SHA256)  $(BUILD_DIR)/wamr-verify/wamr.tar.gz" | sha256sum -c -
+	tar xzf $(BUILD_DIR)/wamr-verify/wamr.tar.gz -C $(BUILD_DIR)/wamr-verify
+	@set -e; count=0; \
+	upstream=$(BUILD_DIR)/wamr-verify/wasm-micro-runtime-$(WAMR_VERSION); \
+	for f in $$(cd $(WAMR_DIR) && find . -type f | sort); do \
+	  if [ ! -f "$$upstream/$$f" ]; then \
+	    echo "verify-wamr: $$f is not in $(WAMR_VERSION)"; exit 1; fi; \
+	  cmp -s "$(WAMR_DIR)/$$f" "$$upstream/$$f" || \
+	    { echo "verify-wamr: $$f differs from upstream"; exit 1; }; \
+	  count=$$((count + 1)); \
+	done; \
+	echo "verify-wamr: $$count vendored files match $(WAMR_VERSION) byte for byte"
 
 $(KERNEL_ELF): $(KERNEL_OBJECTS) $(LINKER_SCRIPT)
 	mkdir -p $(BUILD_DIR)
