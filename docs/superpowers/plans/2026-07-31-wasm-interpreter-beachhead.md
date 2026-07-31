@@ -720,13 +720,40 @@ Follows the `tla2tools.jar` precedent exactly: pinned version, pinned sha256, do
 
 Build configuration per spec D3.5: `WASM_ENABLE_INTERP=1`, `FAST_INTERP=0`, `AOT=0`, `JIT=0`, `LIBC_WASI=0`, `MULTI_MODULE=0`, `SHARED_MEMORY=0`, `THREAD_MGR=0`. No CMake — a curated `.c` list compiled with `zig cc` into `build/wamr/*.o`, with `-I kernel/wasm/shim/include` so Task 2's headers satisfy WAMR's includes.
 
-- [ ] **Step 1: Add the pinned download rule**
-- [ ] **Step 2: Verify the checksum and commit the vendored tree**
-- [ ] **Step 3: Add the curated file list and compile flags**
-- [ ] **Step 4: Build to a linkable archive; resolve missing symbols by extending the file list or Task 2's shim**
-- [ ] **Step 5: Commit**
+- [x] **Step 1: Add the pinned download rule**
+- [x] **Step 2: Verify the checksum and commit the vendored tree**
+- [x] **Step 3: Add the curated file list and compile flags**
+- [x] **Step 4: Build to a linkable archive; resolve missing symbols by extending the file list or Task 2's shim**
+- [x] **Step 5: Commit**
 
 > If the environment has no network access, Step 1 is Jacob's to run; everything after it is Jacob's.
+
+**Done 2026-07-31 (commit `8bb4a9ed`).** Pinned `WAMR-2.4.5`, sha256
+`1ab09d51099f276ca4a1d6629f6b589aab2bd0caa01445e05031a4bed22c199b`. Vendored
+the curated subset — 26 compiled units, 75 files — with `make verify-wamr`
+re-downloading the tarball and proving every vendored file matches upstream
+byte for byte. Objects are linked into `KERNEL_OBJECTS` directly rather than
+into an archive, so every undefined symbol must resolve now instead of at
+Task 8.
+
+Three corrections to this task as written:
+
+- **`arch/invokeNative_em64.s` was missing from the plan's file list.** On
+  x86-64 it is the hand-written trampoline that marshals wasm operands into
+  SysV registers for a host call; `invokeNative_general.c` is documented
+  upstream as unreliable on this target. Task 8 cannot call a host function
+  without it. It is lowercase `.s`, so it needs its own flags — clang skips
+  the preprocessor and rejects the C-only flags in `CFLAGS` under `-Werror`.
+- **`../aot/aot_runtime.h` is included unguarded** by six files even with
+  `WASM_ENABLE_AOT=0`, and it pulls `../compilation/aot.h`. Both are vendored
+  as headers only; neither drags in LLVM.
+- **`wasm_c_api.c` had to be vendored, not excluded.** `wasm_interp_classic.c`
+  itself calls `wasm_runtime_invoke_c_api_native`, which needs
+  `wasm_trap_delete`. A local stub would have been a fake.
+
+`KERNEL_OBJECTS` is assigned with `:=` before this block exists, so the WAMR
+objects are appended with `+=` afterwards. Referencing them inline in the
+original assignment expands to nothing and silently links a WAMR-less kernel.
 
 ---
 
@@ -741,10 +768,32 @@ Build configuration per spec D3.5: `WASM_ENABLE_INTERP=1`, `FAST_INTERP=0`, `AOT
 
 Maps `os_malloc`/`os_realloc`/`os_free` onto `k*`; `os_printf`/`os_vprintf` onto `printk`; `os_time_get_boot_us` onto PIT ticks; `bh_platform_init` returns 0. Mutex, condition-variable, and thread functions are no-ops — legitimate because `THREAD_MGR=0` and I5 makes components single-threaded by definition.
 
-- [ ] **Step 1: Implement the surface**
-- [ ] **Step 2: Link the kernel and resolve remaining undefined symbols**
-- [ ] **Step 3: `make kernel` green**
-- [ ] **Step 4: Commit**
+- [x] **Step 1: Implement the surface**
+- [x] **Step 2: Link the kernel and resolve remaining undefined symbols**
+- [x] **Step 3: `make kernel` green**
+- [x] **Step 4: Commit**
+
+**Done 2026-07-31 (commit `8bb4a9ed`).** `platform_internal.h` supplies the
+types WAMR expects (`korp_mutex`, `korp_cond`, `korp_tid`, `os_file_handle`,
+`os_getpagesize`), `platform_init.c` the functions. Mutex and condition
+variables are no-ops per I5. `os_dumps_proc_mem_info` was needed too —
+`bh_log.c` calls it unguarded.
+
+Two decisions worth carrying into Task 8:
+
+- **`os_thread_get_stack_boundary` returns NULL.** Upstream explicitly allows
+  this and branches on it, but the consequence is that WAMR cannot check for
+  native stack overflow. A deeply recursive module is bounded only by WAMR's
+  own wasm stack limit, not by the 256 KiB boot stack. This is the largest
+  known gap in the port and wants a real answer before untrusted modules run.
+- **`os_mmap` returns NULL and `os_mprotect` returns -1** rather than faking
+  success. Nothing in the interpreter-only path calls them —
+  `OS_ENABLE_HW_BOUND_CHECK` is off, so WAMR emits explicit bounds
+  comparisons instead of the guard-page-plus-SIGSEGV trick, which a kernel
+  cannot do anyway. If a path ever does reach them, it fails loudly.
+
+`os_time_get_boot_us` is PIT ticks at the 100 Hz `main.c:504` sets, so its
+resolution is 10 ms. Fine for logging, wrong for anything metering U9.
 
 ---
 

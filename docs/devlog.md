@@ -247,4 +247,77 @@ halts — it falls into the timer tick loop — and the final verification boot
 had no kill. Every boot is now bounded, either by the chosen kill moment or by
 polling the serial log for a verdict.
 
+## 2026-07-31 (later) — WAMR is in the kernel, and -O0 has opinions about math
+
+Tasks 6 and 7 of the beachhead plan. WAMR 2.4.5 is vendored, ported onto
+kernel services, and linked into `jani.elf`, which still boots and still
+passes 25 crash cycles. Nothing executes WASM yet — that is Task 8.
+
+The plan left these two tasks deliberately vague, on the grounds that writing
+a file list from memory for a tree nobody had read would be worse than
+admitting the gap. That was the right call: reading the tree contradicted the
+plan three times.
+
+**The trampoline the plan forgot.** `arch/invokeNative_em64.s` is not in the
+plan's file list, and on x86-64 it is the hand-written assembly that marshals
+wasm operands into SysV registers for a host call. Task 8's entire purpose is
+calling a host function; without this file it could not have worked. The C
+fallback exists but upstream documents it as unreliable on x86-64 precisely
+because some arguments go in registers rather than on the stack.
+
+**`aot_runtime.h` is included unguarded** by six files even with AOT off, and
+it pulls `compilation/aot.h` behind it. Both are vendored as headers. Neither
+drags in LLVM — they are type definitions. And `wasm_c_api.c` could not be
+excluded after all: the classic interpreter itself calls
+`wasm_runtime_invoke_c_api_native`, which needs `wasm_trap_delete`. Writing
+our own would have been a stub pretending to be upstream's semantics.
+
+**The math shim did not survive the kernel's `-O0`.** Task 2 asserted that
+`__builtin_sqrt` and friends "compile to single instructions now that SSE is
+on." True at `-O2`; false at `-O0`, where clang emits calls to libm. The
+freestanding link failed on `sqrt`, `ceil`, `floor`, `trunc`, `rint` and
+their float variants. The hosted tests could not see this — the host links
+libm, so the shim's tests passed while the kernel could not link.
+
+The obvious fix was the trap. SSE4.1's `roundsd` does floor/ceil/trunc in one
+instruction, and `QEMU_FLAGS` pins `-cpu qemu64`, which does not have SSE4.1.
+That would have converted a link error into a `#UD` at runtime in a driver
+somewhere — the same shape as the SSE bug from two sessions ago. So `sqrt`
+uses `sqrtsd` (SSE2, which `start.S` already guarantees) and the rounding
+functions are portable C.
+
+**`qsort` is where the untrusted bytes are.** WAMR's module loader sorts
+export *names*, taken straight from the module, to detect duplicates. A
+fixed-pivot quicksort there is an algorithmic-complexity attack a module can
+trigger on purpose, during load, in kernel context. It is introsort now —
+median-of-three quicksort falling back to heapsort past a `2*log2(n)` depth
+limit — recursing into the smaller partition and looping on the larger, so
+stack depth is `O(log n)` on a 256 KiB boot stack rather than `O(n)`. The
+tests use the shapes that motivated it: 4096 elements all equal, fully
+reversed, organ-pipe.
+
+**`make verify-wamr`** re-downloads the pinned tarball, checks its sha256, and
+proves all 75 vendored files match upstream byte for byte. The vendored tree
+is the curated subset — 26 compiled units — so the pin means something it
+otherwise would not once files are pruned.
+
+Two known gaps, both Task 8's problem before any untrusted module runs:
+
+- `os_thread_get_stack_boundary` returns NULL. Upstream allows it and
+  branches on it, but WAMR then cannot detect native stack overflow. Deep
+  recursion is bounded by WAMR's wasm stack limit only, not by the real
+  stack.
+- `os_time_get_boot_us` is PIT ticks at 100 Hz, so 10 ms resolution. Fine for
+  logging, useless for the U9 latency budget.
+
+Also worth a note: `KERNEL_OBJECTS` uses `:=`, so referencing the WAMR object
+lists inline in that assignment expanded to nothing and cheerfully linked a
+kernel with no WAMR in it. The tell was collapsed whitespace in the `ld` line.
+They are appended with `+=` after the definitions now. Make's two assignment
+operators are exactly the kind of silent-success failure this project keeps
+running into.
+
+Gates: `make test` 3,258 checks (was 1,108), `make kernel` links,
+`make crash-test` 25/25, both fuzz campaigns clean, `verify-wamr` clean.
+
 <!-- Next entry goes here -->
