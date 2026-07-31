@@ -83,6 +83,9 @@ VIRTIO_BLK_SOURCE := kernel/drivers/virtio_blk.c
 SERIAL_SOURCE := kernel/drivers/serial.c
 PRINTK_SOURCE := kernel/lib/printk.c
 STRING_SOURCE := kernel/lib/string.c
+HELLO_WASM := $(BUILD_DIR)/hello.wasm
+HELLO_SOURCE := components/hello/hello.zig
+
 LINKER_SCRIPT := kernel/boot/linker.ld
 LIMINE_CONFIG := kernel/boot/limine.conf
 LIMINE_DIR := third_party/limine
@@ -128,7 +131,7 @@ WASM_SHIM_SOURCES := kernel/wasm/shim/string.c kernel/wasm/shim/stdio.c \
 
 .PHONY: all check-tools kernel iso run run-debug test fuzz-heap \
 	fuzz-object-store fuzz-wasm-shim fuzz-wasm-module model-check model-check-negative \
-	crash-test clean
+	crash-test hello-wasm clean
 
 all: iso
 
@@ -369,6 +372,15 @@ fuzz-wasm-module: $(FUZZ_WASM_MODULE_BIN)
 	printf '\000asm\001\000\000\000\001\002\252\273\003\000' \
 	  > $(BUILD_DIR)/fuzz-corpus-wasm-module/seed-valid
 	$(FUZZ_WASM_MODULE_BIN) $(BUILD_DIR)/fuzz-corpus-wasm-module -runs=$(FUZZ_RUNS) -max_len=1024 -timeout=5
+
+# -fno-entry: this is a library of exports, not a program with a main.
+# --export=run is what makes the handler visible to the host.
+$(HELLO_WASM): $(HELLO_SOURCE) Makefile
+	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(ZIG) build-exe -target wasm32-freestanding -O ReleaseSmall \
+	  -fno-entry -rdynamic --export=run $(HELLO_SOURCE) -femit-bin=$(HELLO_WASM)
+
+hello-wasm: $(HELLO_WASM)
 
 $(MODULE_VALIDATE_OBJ): $(MODULE_VALIDATE_SOURCE) Makefile
 	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
