@@ -62,6 +62,7 @@ void idt_init(void) {
     idt_set_gate(0, (uint64_t)(uintptr_t)isr_divide_error, IDT_GATE_INTERRUPT);
     idt_set_gate(6, (uint64_t)(uintptr_t)isr_invalid_opcode, IDT_GATE_INTERRUPT);
     idt_set_gate(14, (uint64_t)(uintptr_t)isr_page_fault, IDT_GATE_INTERRUPT);
+    idt_set_gate(19, (uint64_t)(uintptr_t)isr_simd_error, IDT_GATE_INTERRUPT);
     idt_set_gate(32, (uint64_t)(uintptr_t)isr_irq0, IDT_GATE_INTERRUPT);
     idt_set_gate(33, (uint64_t)(uintptr_t)isr_irq1, IDT_GATE_INTERRUPT);
 

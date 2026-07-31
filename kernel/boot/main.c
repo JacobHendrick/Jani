@@ -24,6 +24,31 @@
 __attribute__((used, section(".limine_requests")))
 static volatile uint64_t limine_base_revision[] = LIMINE_BASE_REVISION(6);
 
+#define LIMINE_COMMON_MAGIC \
+    0xc7b1dd30df4c8b88, 0x0a82e883a194f07b
+
+#define LIMINE_STACK_SIZE_REQUEST \
+    { LIMINE_COMMON_MAGIC, 0x224ef0460a8e8926, 0xe1cb0fc25f46ea3d }
+
+struct limine_stack_size_response {
+    uint64_t revision;
+};
+
+struct limine_stack_size_request {
+    uint64_t id[4];
+    uint64_t revision;
+    struct limine_stack_size_response *response;
+    uint64_t stack_size;
+};
+
+__attribute__((used, section(".limine_requests")))
+static volatile struct limine_stack_size_request stack_size_request = {
+    .id = LIMINE_STACK_SIZE_REQUEST,
+    .revision = 0,
+    .response = 0,
+    .stack_size = 256 * 1024
+};
+
 __attribute__((used, section(".limine_requests_start")))
 static volatile uint64_t limine_requests_start_marker[] =
     LIMINE_REQUESTS_START_MARKER;
@@ -413,6 +438,25 @@ void kmain(void) {
     gdt_init();
     idt_init();
     serial_init();
+
+    if (stack_size_request.response == 0) {
+        kputs("WARNING: limine ignored the stack size request\n");
+    } else {
+        kputs("stack: 256 KiB requested and granted\n");
+    }
+
+    {
+        volatile double a = 2.0;
+        volatile double b = 3.5;
+        volatile double product = a * b;
+
+        if ((product > 6.9) && (product < 7.1)) {
+            kputs("fpu: floating point works\n");
+        } else {
+            kputs("ERROR: floating point produced a wrong result\n");
+        }
+    }
+
     memory_map_print();
     pmm_init();
     vmm_init();

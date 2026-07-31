@@ -31,6 +31,7 @@ void interrupt_handler(struct interrupt_frame *frame);
 void isr_divide_error(void);
 void isr_invalid_opcode(void);
 void isr_page_fault(void);
+void isr_simd_error(void);
 void isr_irq0(void);
 void isr_irq1(void);
 

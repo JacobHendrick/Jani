@@ -3,6 +3,7 @@
 .global isr_divide_error
 .global isr_invalid_opcode
 .global isr_page_fault
+.global isr_simd_error
 .global isr_irq0
 .global isr_irq1
 .extern interrupt_handler
@@ -22,6 +23,12 @@ isr_invalid_opcode:
 isr_page_fault:
     cli
     pushq $14
+    jmp isr_common
+
+isr_simd_error:
+    cli
+    pushq $0
+    pushq $19
     jmp isr_common
 
 isr_irq0:
@@ -54,8 +61,12 @@ isr_common:
     cld
     movq %rsp, %rdi
     movq %rsp, %rbx
+    subq $512, %rsp
     andq $-16, %rsp
+    fxsave (%rsp)
+    movq %rsp, %r12
     call interrupt_handler
+    fxrstor (%r12)
     movq %rbx, %rsp
 
     popq %r15

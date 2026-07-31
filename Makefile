@@ -23,6 +23,7 @@ ZIG_ENV := env ZIG_GLOBAL_CACHE_DIR=$(ZIG_GLOBAL_CACHE_DIR) ZIG_LOCAL_CACHE_DIR=
 
 KERNEL_ELF := $(BUILD_DIR)/jani.elf
 ISO_IMAGE := $(BUILD_DIR)/jani.iso
+START_OBJ := $(BUILD_DIR)/start.o
 MAIN_OBJ := $(BUILD_DIR)/main.o
 GDT_OBJ := $(BUILD_DIR)/gdt.o
 IDT_OBJ := $(BUILD_DIR)/idt.o
@@ -51,8 +52,9 @@ VIRTIO_BLK_OBJ := $(BUILD_DIR)/virtio_blk.o
 SERIAL_OBJ := $(BUILD_DIR)/serial.o
 PRINTK_OBJ := $(BUILD_DIR)/printk.o
 STRING_OBJ := $(BUILD_DIR)/string.o
-KERNEL_OBJECTS := $(MAIN_OBJ) $(GDT_OBJ) $(IDT_OBJ) $(ISR_OBJ) $(INTERRUPTS_OBJ) $(PIC_OBJ) $(PIT_OBJ) $(KEYBOARD_OBJ) $(MEMORY_MAP_OBJ) $(LAYOUT_OBJ) $(PMM_OBJ) $(VMM_OBJ) $(MMIO_OBJ) $(HEAP_OBJ) $(FREE_LIST_OBJ) $(HEAP_BACKEND_OBJ) $(OBJECT_ID_OBJ) $(OBJECT_TABLE_OBJ) $(OBJECT_HEADER_VALIDATE_OBJ) $(WAL_VALIDATE_OBJ) $(OBJECT_STORE_OBJ) $(PCI_OBJ) $(VIRTIO_PCI_OBJ) $(VIRTQUEUE_OBJ) $(VIRTIO_BLK_OBJ) $(SERIAL_OBJ) $(PRINTK_OBJ) $(STRING_OBJ)
+KERNEL_OBJECTS := $(START_OBJ) $(MAIN_OBJ) $(GDT_OBJ) $(IDT_OBJ) $(ISR_OBJ) $(INTERRUPTS_OBJ) $(PIC_OBJ) $(PIT_OBJ) $(KEYBOARD_OBJ) $(MEMORY_MAP_OBJ) $(LAYOUT_OBJ) $(PMM_OBJ) $(VMM_OBJ) $(MMIO_OBJ) $(HEAP_OBJ) $(FREE_LIST_OBJ) $(HEAP_BACKEND_OBJ) $(OBJECT_ID_OBJ) $(OBJECT_TABLE_OBJ) $(OBJECT_HEADER_VALIDATE_OBJ) $(WAL_VALIDATE_OBJ) $(OBJECT_STORE_OBJ) $(PCI_OBJ) $(VIRTIO_PCI_OBJ) $(VIRTQUEUE_OBJ) $(VIRTIO_BLK_OBJ) $(SERIAL_OBJ) $(PRINTK_OBJ) $(STRING_OBJ)
 
+START_SOURCE := kernel/boot/start.S
 KERNEL_SOURCE := kernel/boot/main.c
 GDT_SOURCE := kernel/arch/gdt.c
 IDT_SOURCE := kernel/arch/idt.c
@@ -91,9 +93,6 @@ CFLAGS := -target x86_64-freestanding-none \
 	-fno-pie \
 	-mcmodel=kernel \
 	-mno-red-zone \
-	-mno-sse \
-	-mno-sse2 \
-	-mno-mmx \
 	-Wall \
 	-Wextra \
 	-Werror \
@@ -102,7 +101,7 @@ CFLAGS := -target x86_64-freestanding-none \
 	-fsanitize=undefined \
 	-fsanitize-trap=undefined
 
-ZIG_KERNEL_TARGET := -target x86_64-freestanding-none -mcpu=x86_64-sse-sse2-mmx
+ZIG_KERNEL_TARGET := -target x86_64-freestanding-none
 
 LDFLAGS := -T $(LINKER_SCRIPT)
 
@@ -129,6 +128,10 @@ check-tools:
 	$(XORRISO) -version
 	$(QEMU) --version
 	$(LIMINE_DIR)/limine --version
+
+$(START_OBJ): $(START_SOURCE) Makefile
+	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(CC) $(CFLAGS) -c $(START_SOURCE) -o $(START_OBJ)
 
 $(MAIN_OBJ): $(KERNEL_SOURCE) Makefile
 	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)

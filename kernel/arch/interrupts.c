@@ -22,6 +22,8 @@ static const char *exception_name(uint64_t vector) {
             return "invalid opcode";
         case 14:
             return "page fault";
+        case 19:
+            return "simd floating-point exception";
         default:
             return "unknown exception";
     }
