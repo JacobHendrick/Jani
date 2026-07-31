@@ -19,8 +19,16 @@ void *jani_calloc(size_t count, size_t size);
 void *jani_realloc(void *memory, size_t size);
 void jani_free(void *memory);
 int jani_abs(int value);
+long jani_labs(long value);
 long jani_strtol(const char *text, char **end, int base);
 unsigned long jani_strtoul(const char *text, char **end, int base);
+
+typedef int (*jani_compare_fn)(const void *left, const void *right);
+
+void *jani_bsearch(const void *key, const void *base, size_t count,
+                   size_t size, jani_compare_fn compare);
+void jani_qsort(void *base, size_t count, size_t size,
+                jani_compare_fn compare);
 
 int jani_snprintf(char *buffer, size_t size, const char *format, ...);
 int jani_vsnprintf(char *buffer, size_t size, const char *format, va_list args);
@@ -40,6 +48,7 @@ double jani_fmax(double left, double right);
 double jani_copysign(double magnitude, double sign);
 int jani_isnan(double value);
 int jani_isinf(double value);
+int jani_signbit(double value);
 
 float jani_sqrtf(float value);
 float jani_fabsf(float value);

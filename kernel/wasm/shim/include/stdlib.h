@@ -10,7 +10,12 @@
 #define realloc jani_realloc
 #define free jani_free
 #define abs jani_abs
+#define labs jani_labs
 #define strtol jani_strtol
 #define strtoul jani_strtoul
+#define bsearch jani_bsearch
+#define qsort jani_qsort
+
+#define abort() jani_abort(__FILE__, __LINE__, "abort")
 
 #endif

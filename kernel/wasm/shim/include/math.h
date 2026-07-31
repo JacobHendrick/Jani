@@ -14,6 +14,7 @@
 #define copysign jani_copysign
 #define isnan jani_isnan
 #define isinf jani_isinf
+#define signbit jani_signbit
 
 #define sqrtf jani_sqrtf
 #define fabsf jani_fabsf

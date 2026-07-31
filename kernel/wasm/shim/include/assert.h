@@ -6,4 +6,8 @@
 #define assert(expression) \
     ((expression) ? (void)0 : jani_abort(__FILE__, __LINE__, #expression))
 
+#ifndef static_assert
+#define static_assert _Static_assert
+#endif
+
 #endif
