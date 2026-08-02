@@ -159,19 +159,33 @@ os_cond_broadcast(korp_cond *cond)
 void *
 os_mmap(void *hint, size_t size, int prot, int flags, os_file_handle file)
 {
+    void *memory;
+
     (void)hint;
-    (void)size;
     (void)prot;
     (void)flags;
     (void)file;
-    return NULL;
+
+    if (size == 0) {
+        return NULL;
+    }
+
+    memory = kmalloc(size);
+
+    if (memory == NULL) {
+        return NULL;
+    }
+
+    memset(memory, 0, size);
+
+    return memory;
 }
 
 void
 os_munmap(void *addr, size_t size)
 {
-    (void)addr;
     (void)size;
+    kfree(addr);
 }
 
 int
@@ -179,17 +193,45 @@ os_mprotect(void *addr, size_t size, int prot)
 {
     (void)addr;
     (void)size;
-    (void)prot;
-    return -1;
+
+    if ((prot & MMAP_PROT_EXEC) != 0) {
+        return -1;
+    }
+
+    if ((prot & (MMAP_PROT_READ | MMAP_PROT_WRITE))
+        != (MMAP_PROT_READ | MMAP_PROT_WRITE)) {
+        return -1;
+    }
+
+    return 0;
 }
 
 void *
 os_mremap(void *old_addr, size_t old_size, size_t new_size)
 {
-    (void)old_addr;
-    (void)old_size;
-    (void)new_size;
-    return NULL;
+    void *memory;
+
+    if ((new_size == 0) || (new_size < old_size)) {
+        return NULL;
+    }
+
+    memory = kmalloc(new_size);
+
+    if (memory == NULL) {
+        return NULL;
+    }
+
+    if ((old_addr != NULL) && (old_size > 0)) {
+        memcpy(memory, old_addr, old_size);
+    }
+
+    memset((uint8 *)memory + old_size, 0, new_size - old_size);
+
+    if (old_addr != NULL) {
+        kfree(old_addr);
+    }
+
+    return memory;
 }
 
 int
