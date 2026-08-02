@@ -51,7 +51,7 @@ fn read_leb128_u32(bytes: []const u8, offset: usize) ?LengthResult {
     return null;
 }
 
-export fn wasm_module_validate(
+export fn jani_wasm_module_validate(
     bytes: [*c]const u8,
     byte_count: usize,
     section_count_out: [*c]u32,

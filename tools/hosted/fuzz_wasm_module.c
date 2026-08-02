@@ -8,7 +8,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     int accepted;
 
     sections = 0xFFFFFFFFu;
-    accepted = wasm_module_validate(data, size, &sections);
+    accepted = jani_wasm_module_validate(data, size, &sections);
 
     if ((accepted != 0) && (accepted != 1)) {
         __builtin_trap();
@@ -21,12 +21,12 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     if (!accepted && (size >= 8)) {
         uint32_t ignored = 0;
 
-        if (wasm_module_validate(data, size, &ignored) != 0) {
+        if (jani_wasm_module_validate(data, size, &ignored) != 0) {
             __builtin_trap();
         }
     }
 
-    (void)wasm_module_validate(data, size, 0);
+    (void)jani_wasm_module_validate(data, size, 0);
 
     return 0;
 }

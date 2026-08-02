@@ -13,16 +13,16 @@ static void test_rejects_short_input(void) {
     const uint8_t bytes[] = { WASM_HEADER };
     uint32_t sections;
 
-    CHECK(!wasm_module_validate(0, 0, &sections));
-    CHECK(!wasm_module_validate(bytes, 0, &sections));
-    CHECK(!wasm_module_validate(bytes, 7, &sections));
+    CHECK(!jani_wasm_module_validate(0, 0, &sections));
+    CHECK(!jani_wasm_module_validate(bytes, 0, &sections));
+    CHECK(!jani_wasm_module_validate(bytes, 7, &sections));
 }
 
 static void test_rejects_bad_magic(void) {
     const uint8_t bytes[] = { 'X', 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00 };
     uint32_t sections;
 
-    CHECK(!wasm_module_validate(bytes, sizeof(bytes), &sections));
+    CHECK(!jani_wasm_module_validate(bytes, sizeof(bytes), &sections));
 }
 
 static void test_rejects_bad_version(void) {
@@ -31,7 +31,7 @@ static void test_rejects_bad_version(void) {
     };
     uint32_t sections;
 
-    CHECK(!wasm_module_validate(bytes, sizeof(bytes), &sections));
+    CHECK(!jani_wasm_module_validate(bytes, sizeof(bytes), &sections));
 }
 
 static void test_accepts_header_only_module(void) {
@@ -39,7 +39,7 @@ static void test_accepts_header_only_module(void) {
     uint32_t sections;
 
     sections = 0xFFFFFFFFu;
-    CHECK(wasm_module_validate(bytes, sizeof(bytes), &sections));
+    CHECK(jani_wasm_module_validate(bytes, sizeof(bytes), &sections));
     CHECK(sections == 0);
 }
 
@@ -48,7 +48,7 @@ static void test_accepts_one_empty_section(void) {
     uint32_t sections;
 
     sections = 0;
-    CHECK(wasm_module_validate(bytes, sizeof(bytes), &sections));
+    CHECK(jani_wasm_module_validate(bytes, sizeof(bytes), &sections));
     CHECK(sections == 1);
 }
 
@@ -57,7 +57,7 @@ static void test_accepts_section_with_payload(void) {
     uint32_t sections;
 
     sections = 0;
-    CHECK(wasm_module_validate(bytes, sizeof(bytes), &sections));
+    CHECK(jani_wasm_module_validate(bytes, sizeof(bytes), &sections));
     CHECK(sections == 1);
 }
 
@@ -65,28 +65,28 @@ static void test_rejects_truncated_section_payload(void) {
     const uint8_t bytes[] = { WASM_HEADER, 0x01, 0x7F };
     uint32_t sections;
 
-    CHECK(!wasm_module_validate(bytes, sizeof(bytes), &sections));
+    CHECK(!jani_wasm_module_validate(bytes, sizeof(bytes), &sections));
 }
 
 static void test_rejects_missing_section_length(void) {
     const uint8_t bytes[] = { WASM_HEADER, 0x01 };
     uint32_t sections;
 
-    CHECK(!wasm_module_validate(bytes, sizeof(bytes), &sections));
+    CHECK(!jani_wasm_module_validate(bytes, sizeof(bytes), &sections));
 }
 
 static void test_rejects_unknown_section_id(void) {
     const uint8_t bytes[] = { WASM_HEADER, 0x7E, 0x00 };
     uint32_t sections;
 
-    CHECK(!wasm_module_validate(bytes, sizeof(bytes), &sections));
+    CHECK(!jani_wasm_module_validate(bytes, sizeof(bytes), &sections));
 }
 
 static void test_rejects_duplicate_non_custom_section(void) {
     const uint8_t bytes[] = { WASM_HEADER, 0x01, 0x00, 0x01, 0x00 };
     uint32_t sections;
 
-    CHECK(!wasm_module_validate(bytes, sizeof(bytes), &sections));
+    CHECK(!jani_wasm_module_validate(bytes, sizeof(bytes), &sections));
 }
 
 static void test_allows_repeated_custom_sections(void) {
@@ -94,7 +94,7 @@ static void test_allows_repeated_custom_sections(void) {
     uint32_t sections;
 
     sections = 0;
-    CHECK(wasm_module_validate(bytes, sizeof(bytes), &sections));
+    CHECK(jani_wasm_module_validate(bytes, sizeof(bytes), &sections));
     CHECK(sections == 2);
 }
 
@@ -102,7 +102,7 @@ static void test_rejects_out_of_order_sections(void) {
     const uint8_t bytes[] = { WASM_HEADER, 0x03, 0x00, 0x01, 0x00 };
     uint32_t sections;
 
-    CHECK(!wasm_module_validate(bytes, sizeof(bytes), &sections));
+    CHECK(!jani_wasm_module_validate(bytes, sizeof(bytes), &sections));
 }
 
 static void test_rejects_overlong_leb128(void) {
@@ -111,7 +111,7 @@ static void test_rejects_overlong_leb128(void) {
     };
     uint32_t sections;
 
-    CHECK(!wasm_module_validate(bytes, sizeof(bytes), &sections));
+    CHECK(!jani_wasm_module_validate(bytes, sizeof(bytes), &sections));
 }
 
 static void test_rejects_length_that_overflows(void) {
@@ -120,7 +120,7 @@ static void test_rejects_length_that_overflows(void) {
     };
     uint32_t sections;
 
-    CHECK(!wasm_module_validate(bytes, sizeof(bytes), &sections));
+    CHECK(!jani_wasm_module_validate(bytes, sizeof(bytes), &sections));
 }
 
 static void test_multi_byte_leb128_length(void) {
@@ -138,14 +138,14 @@ static void test_multi_byte_leb128_length(void) {
     bytes[10] = 0x01;
 
     sections = 0;
-    CHECK(wasm_module_validate(bytes, sizeof(bytes), &sections));
+    CHECK(jani_wasm_module_validate(bytes, sizeof(bytes), &sections));
     CHECK(sections == 1);
 }
 
 static void test_null_section_count_is_allowed(void) {
     const uint8_t bytes[] = { WASM_HEADER, 0x01, 0x00 };
 
-    CHECK(wasm_module_validate(bytes, sizeof(bytes), 0));
+    CHECK(jani_wasm_module_validate(bytes, sizeof(bytes), 0));
 }
 
 int main(void) {

@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-int wasm_module_validate(
+int jani_wasm_module_validate(
     const uint8_t *bytes,
     size_t byte_count,
     uint32_t *section_count_out
