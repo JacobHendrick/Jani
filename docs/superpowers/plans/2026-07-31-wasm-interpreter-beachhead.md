@@ -577,7 +577,7 @@ git commit -m "Test WASM module in Zig"
 - Consumes: `wasm_module_validate` from Task 3; `build/hello.wasm` from Task 4.
 - Produces: in `kmain`, a validated `{const uint8_t *bytes, size_t length}` pair passed to Task 8's `jani_wasm_run_module`.
 
-- [ ] **Step 1: Declare the module request**
+- [x] **Step 1: Declare the module request**
 
 In `main.c`, beside the existing requests:
 
@@ -624,7 +624,7 @@ static volatile struct limine_module_request module_request = {
 
 > Same caveat as Task 1 Step 1: verify the request ID against the Limine protocol document for the vendored version. A wrong ID leaves `response` null, which Step 3 reports rather than hiding.
 
-- [ ] **Step 2: Name the module in limine.conf**
+- [x] **Step 2: Name the module in limine.conf**
 
 Add to the kernel's boot entry in `kernel/boot/limine.conf`:
 
@@ -640,7 +640,7 @@ And in the `Makefile`'s ISO rule, copy the module into the ISO tree beside the k
 
 Add `$(HELLO_WASM)` to the ISO target's prerequisites.
 
-- [ ] **Step 3: Fetch and validate the bytes**
+- [x] **Step 3: Fetch and validate the bytes**
 
 In `kmain`, before the store demo:
 
@@ -673,7 +673,7 @@ static int run_wasm_demo(void) {
 
 Call it from `kmain` and report its result. Task 8 extends this function; for now it stops after validation.
 
-- [ ] **Step 4: Boot and verify**
+- [x] **Step 4: Boot and verify**
 
 Run: `make iso && make run`
 
@@ -686,14 +686,14 @@ wasm: pre-validation ok, 6 sections
 
 The byte count should match `ls -l build/hello.wasm` exactly. If it does not, the ISO is carrying a stale copy.
 
-- [ ] **Step 5: Regression check**
+- [x] **Step 5: Regression check**
 
 ```bash
 make test
 make crash-test
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add kernel/boot/main.c kernel/boot/limine.conf Makefile
@@ -810,7 +810,7 @@ The payoff task.
 - Consumes: WAMR's API from Task 6; the platform port from Task 7; validated bytes from Task 5.
 - Produces: `int jani_wasm_run_module(const uint8_t *bytes, size_t length);` returning 1 on success.
 
-- [ ] **Step 1: Declare the interface**
+- [x] **Step 1: Declare the interface**
 
 `kernel/wasm/runtime.h`:
 
@@ -826,7 +826,7 @@ int jani_wasm_run_module(const uint8_t *bytes, size_t length);
 #endif
 ```
 
-- [ ] **Step 2: Write the host function**
+- [x] **Step 2: Write the host function**
 
 This is the first host function in the project and it sets the shape every syscall copies later. The bounds check is the whole point — `offset` and `length` arrive from inside the sandbox and must be validated against the instance's linear memory before any pointer is formed (R4).
 
@@ -856,7 +856,7 @@ static void jani_log_wrapper(
 
 `wasm_runtime_validate_app_addr` is WAMR's own bounds check against the instance's memory; using it rather than hand-rolling the comparison is deliberate, because WAMR knows about memory growth and we do not.
 
-- [ ] **Step 3: Register it and run the module**
+- [x] **Step 3: Register it and run the module**
 
 ```c
 static NativeSymbol native_symbols[] = {
@@ -876,11 +876,11 @@ Print one line per step so a failure names itself:
     kputs("wamr: instance destroyed, heap returned\n");
 ```
 
-- [ ] **Step 4: Call it from main.c**
+- [x] **Step 4: Call it from main.c**
 
 Extend `run_wasm_demo` so that after successful pre-validation it calls `jani_wasm_run_module(module_bytes, module_length)` and reports the result.
 
-- [ ] **Step 5: Build and run**
+- [x] **Step 5: Build and run**
 
 Run: `make iso && make run`
 
@@ -896,18 +896,18 @@ hello from a WebAssembly module
 wamr: instance destroyed, heap returned
 ```
 
-- [ ] **Step 6: Check the heap actually came back**
+- [x] **Step 6: Check the heap actually came back**
 
 Print `kheap_used_bytes()` before and after. They should match. A mismatch means WAMR leaked, which matters because slice 2 instantiates components repeatedly.
 
-- [ ] **Step 7: Full regression**
+- [x] **Step 7: Full regression**
 
 ```bash
 make test
 make crash-test
 ```
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add kernel/wasm/runtime.c kernel/wasm/runtime.h kernel/boot/main.c Makefile

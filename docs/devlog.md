@@ -320,4 +320,97 @@ running into.
 Gates: `make test` 3,258 checks (was 1,108), `make kernel` links,
 `make crash-test` 25/25, both fuzz campaigns clean, `verify-wamr` clean.
 
+## 2026-08-02 — A WASM module runs in the kernel, and mmap was never there
+
+Task 8. `hello from a WebAssembly module` comes out of the serial port,
+produced by the module, through a host function, inside the kernel. Phase 3
+slice 1 of 4 is done.
+
+Five things were wrong. One was in the code written for the task. The other
+four were invisible by construction — none of them a logic error, all of them
+something that compiled, linked, or booted while doing nothing.
+
+**The bounds check that checked and then proceeded.** `jani_log` validated the
+sandbox-supplied `(offset, length)` against linear memory, set an exception on
+failure, and then read the pointer anyway — the `return` was missing.
+`wasm_runtime_set_exception` does not unwind; it sets a flag the interpreter
+notices when control comes back. So the violation was recorded and permitted
+in the same breath. The one bug in this slice that a compiler could never have
+found, in the one function whose entire purpose is the trust boundary.
+
+**Linear memory does not come from the allocator you give WAMR.** This is the
+big one. `wasm_runtime_full_init` takes malloc/realloc/free, and they serve
+WAMR's internal structures only. Linear memory goes to `os_mmap` directly
+unless `WASM_MEM_ALLOC_WITH_USAGE` is set, and `os_mmap` was a stub returning
+NULL from the platform port. No module with a memory section could ever have
+instantiated. The port was declared done two sessions ago and linked fine,
+because nothing had asked it for memory yet.
+
+**WAMR never zeroes linear memory.** There is no `memset` anywhere in
+`memories_instantiate`. It relies on `mmap` returning zero-filled pages — true
+on every hosted OS, false for `kmalloc`. Backing linear memory with the kernel
+heap without zeroing would have handed every module a 64 KiB window onto
+recycled kernel memory: freed object-store payloads, WAL buffers, whatever
+`kfree` last released, readable from inside the sandbox, in the slice whose
+whole job is to establish that sandbox. Under `mmap` this bug cannot exist,
+which is exactly why it is not guarded against upstream.
+
+That decided the fix. `WASM_MEM_ALLOC_WITH_USAGE` looked like the official
+route, but `realloc_func` receives only the new size — it cannot know where the
+old data ended, so it cannot zero a grown region on `memory.grow`.
+`os_mremap(old_addr, old_size, new_size)` receives both. The `os_*` surface is
+the correct fix, not the workaround. `os_mprotect` returns 0 only for the
+read|write request WAMR actually issues, `-1` otherwise, so a future
+`PROT_NONE` fails loudly instead of silently not protecting.
+
+**A UBSan alignment trap inside vendored WAMR.** `ud1` at
+`tables_instantiate`, which reads as "invalid opcode" but is the sanitizer
+trap, not the CPU rejecting an instruction. Confirmed under gdb rather than
+guessed: `first_table = 0xffffd000000001ec`, low three bits 4. WAMR places it
+at `global_data + global_data_size`, rarely 8-aligned, then stores 8-aligned
+fields through it. Benign on x86-64, invisible everywhere else because nobody
+compiles WAMR under `-fsanitize=undefined`. Vendored objects now build with
+`-fno-sanitize=alignment` — that one check, those files only. `runtime.c`
+builds with plain `CFLAGS` and keeps everything. Worth revisiting if the kernel
+ever leaves `-O0`: with SSE on, an auto-vectorized store through a misaligned
+pointer stops being a sanitizer complaint and becomes a real `#GP`, which is
+the same trap this project already hit once from `start.S`.
+
+**The heap check could not have passed.** The plan's definition of done said
+heap usage must return to its pre-run value, and `kheap_used_bytes` returns
+`heap_next - heap_base` — a bump-pointer high-water mark that never decreases.
+Frees go to a free list; the mark only advances. The criterion was unmeetable
+by any correct implementation, and the 1.2 MB it reported was not a leak. The
+line reports now rather than asserts. A real test still matters, because the
+plan itself notes slice 2 instantiates components repeatedly: instantiate,
+tear down, instantiate again, and assert the high-water did not move the second
+time. Not yet written.
+
+Three wiring gaps, all of which fail later than compile, found by trial-linking
+the kernel against a stub `runtime.c` before the real one existed:
+
+- `limine.conf` had no `module_path`, so the ISO shipped `hello.wasm` and
+  nothing loaded it. The commit that put it in the ISO tree was green.
+- `MODULE_VALIDATE_OBJ` was defined but never in `KERNEL_OBJECTS`.
+- `runtime.c` had no object rule.
+
+And a symbol collision that had been latent since the validator landed:
+`wasm_module_validate` is already public in the WebAssembly C API
+(`wasm_c_api.c:2370`). Two definitions coexisted quietly because
+`module_validate.o` was never linked. Adding the missing object is what made
+them meet. Namespaced to `jani_wasm_module_validate`.
+
+Also restored an `object_store_get` in `run_store_demo` that an edit had
+overwritten. It never failed — it left `header` and `payload` holding the
+previous get's values, so the version-2 assertion was checking stale data. A
+silent weakening of a check inside the demo `make crash-test` runs 25 times.
+
+`os_thread_get_stack_boundary` now returns a real value: the machinery was
+already committed and nothing had ever called `kernel_stack_set_size`, so it
+returned null forever. `os_time_get_boot_us` is still PIT ticks at 100 Hz.
+
+Gates: `make test` 3,258 checks, `make kernel` links, `make crash-test` 25/25
+with `RECOVERY OK`, both wasm fuzz campaigns clean, `verify-wamr` 75/75 byte
+for byte. All three commits verified green individually, not just the tip.
+
 <!-- Next entry goes here -->
