@@ -178,16 +178,26 @@ WAMR_DEFINES := -DWASM_ENABLE_INTERP=1 \
 # feature flags we turn off, and appear in upstream as shipped.
 WAMR_CFLAGS := $(CFLAGS) -Wno-unused-parameter -Wno-unused-variable
 
+# WAMR puts first_table at global_data + global_data_size, rarely 8-aligned,
+# then stores 8-aligned fields through it. Benign on x86-64 at -O0; traps under
+# -fsanitize=alignment. Only this check, only vendored objects: the loader eats
+# untrusted bytes, so the rest of UBSan stays. Revisit if we leave -O0.
+WAMR_CFLAGS += -fno-sanitize=alignment
+
 # invokeNative_em64.s is lowercase .s, so clang does not run the preprocessor
 # and rejects the C-only flags in CFLAGS as unused under -Werror. It is the
 # hand-written SysV trampoline that marshals wasm operands into registers for
 # a host call, so it must be assembled, not skipped.
 WAMR_ASFLAGS := -target x86_64-freestanding-none -g
 
+WASM_RUNTIME_OBJ := $(BUILD_DIR)/wasm_runtime.o
+WASM_RUNTIME_SOURCE := kernel/wasm/runtime.c
+
 # Appended, not folded into the KERNEL_OBJECTS assignment above: that uses :=
 # and is evaluated before this block exists, so an inline reference there
 # expands to nothing and links a WAMR-less kernel without complaining.
-KERNEL_OBJECTS += $(WASM_SHIM_OBJECTS) $(WAMR_PLATFORM_OBJ) $(WAMR_OBJECTS)
+KERNEL_OBJECTS += $(WASM_SHIM_OBJECTS) $(WAMR_PLATFORM_OBJ) $(WAMR_OBJECTS) \
+	$(MODULE_VALIDATE_OBJ) $(WASM_RUNTIME_OBJ)
 
 .PHONY: all check-tools kernel iso run run-debug test fuzz-heap \
 	fuzz-object-store fuzz-wasm-shim fuzz-wasm-module model-check model-check-negative \
@@ -511,6 +521,10 @@ hello-wasm: $(HELLO_WASM)
 $(MODULE_VALIDATE_OBJ): $(MODULE_VALIDATE_SOURCE) Makefile
 	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
 	$(ZIG_ENV) $(ZIG) build-obj $(ZIG_KERNEL_TARGET) -O Debug $(MODULE_VALIDATE_SOURCE) -femit-bin=$(MODULE_VALIDATE_OBJ)
+
+$(WASM_RUNTIME_OBJ): $(WASM_RUNTIME_SOURCE) Makefile
+	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(CC) $(CFLAGS) $(WAMR_INCLUDES) $(WAMR_DEFINES) -c $(WASM_RUNTIME_SOURCE) -o $(WASM_RUNTIME_OBJ)
 
 fuzz-wasm-shim: $(FUZZ_WASM_SHIM_BIN)
 	mkdir -p $(BUILD_DIR)/fuzz-corpus-wasm-shim

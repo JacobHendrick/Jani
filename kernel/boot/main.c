@@ -14,6 +14,9 @@
 #include "../mm/pmm.h"
 #include "../mm/vmm.h"
 #include "../obj/object_store.h"
+#include "../wasm/module.h"
+#include "../wasm/runtime.h"
+#include "../arch/stack.h"
 
 #define LIMINE_REQUESTS_START_MARKER { 0xf6b8f4b39de7d1ae, 0xfab91a6940fcb9cf, \
                                        0x785c6ed015d3e316, 0x181e920a7852b9d9 }
@@ -47,6 +50,52 @@ static volatile struct limine_stack_size_request stack_size_request = {
     .revision = 0,
     .response = 0,
     .stack_size = 256 * 1024
+};
+
+#define LIMINE_MODULE_REQUEST \
+    { LIMINE_COMMON_MAGIC, 0x3e7e279702be32af, 0xca1c4f3bd1280cee }
+
+struct limine_uuid {
+    uint32_t a;
+    uint16_t b;
+    uint16_t c;
+    uint8_t d[8];
+};
+
+struct limine_file {
+    uint64_t revision;
+    void *address;
+    uint64_t size;
+    char *path;
+    char *string;
+    uint32_t media_type;
+    uint32_t unused;
+    uint8_t tftp_ipv4[4];
+    uint32_t tftp_port;
+    uint32_t partition_index;
+    uint32_t mbr_disk_id;
+    struct limine_uuid gpt_disk_uuid;
+    struct limine_uuid gpt_partition_uuid;
+    struct limine_uuid part_uuid;
+};
+
+struct limine_module_response {
+    uint64_t revision;
+    uint64_t module_count;
+    struct limine_file **modules;
+};
+
+struct limine_module_request {
+    uint64_t id[4];
+    uint64_t revision;
+    struct limine_module_response *response;
+};
+
+__attribute__((used, section(".limine_requests")))
+static volatile struct limine_module_request module_request = {
+    .id = LIMINE_MODULE_REQUEST,
+    .revision = 0,
+    .response = 0
 };
 
 __attribute__((used, section(".limine_requests_start")))
@@ -425,6 +474,31 @@ static int run_store_demo(void) {
     return demo_write_workload();
 }
 
+static int run_wasm_demo(void) {
+    const uint8_t *module_bytes;
+    size_t module_length;
+    uint32_t section_count;
+
+    if ((module_request.response == 0)
+        || (module_request.response->module_count == 0)) {
+        kputs("ERROR: no wasm module supplied by the bootloader\n");
+        return 0;
+    }
+
+    module_bytes = (const uint8_t *)module_request.response->modules[0]->address;
+    module_length = (size_t)module_request.response->modules[0]->size;
+    printk("wasm: limine module, %d bytes\n", (int)module_length);
+
+    section_count = 0;
+    if (!jani_wasm_module_validate(module_bytes, module_length, &section_count)) {
+        kputs("ERROR: wasm module failed pre-validation\n");
+        return 0;
+    }
+    printk("wasm: pre-validation ok, %d sections\n", (int)section_count);
+
+    return jani_wasm_run_module(module_bytes, module_length);
+}
+
 void kmain(void) {
     uint64_t free_frames_before_test;
     uint64_t test_frame;
@@ -442,7 +516,9 @@ void kmain(void) {
     if (stack_size_request.response == 0) {
         kputs("WARNING: limine ignored the stack size request\n");
     } else {
-        kputs("stack: 256 KiB requested and granted\n");
+        kernel_stack_set_size(256 * 1024);
+        printk("stack: 256 KiB granted, limit %p\n",
+               (void *)kernel_stack_limit());
     }
 
     {
@@ -477,6 +553,12 @@ void kmain(void) {
             kputs("object store on virtio-blk ok\n");
         } else {
             kputs("ERROR: object store demo failed\n");
+        }
+
+        if (run_wasm_demo()) {
+            kputs("wasm demo ok\n");
+        } else {
+            kputs("ERROR: wasm demo failed\n");
         }
     } else {
         kputs("ERROR: VMM self-test failed\n");
