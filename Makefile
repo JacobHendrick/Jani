@@ -14,6 +14,8 @@ HOST_CFLAGS := -Wall -Wextra -Werror -g -O1 \
 FUZZ_CFLAGS := $(HOST_CFLAGS) -fsanitize=fuzzer
 FUZZ_RUNS ?= 10000
 CRASH_CYCLES ?= 25
+WOW_CYCLES ?= 3
+WOW_SECONDS ?= 40
 
 BUILD_DIR := build
 ISO_ROOT := $(BUILD_DIR)/iso_root
@@ -130,6 +132,7 @@ FUZZ_OBJECT_STORE_BIN := $(BUILD_DIR)/fuzz_object_store
 FUZZ_WASM_SHIM_BIN := $(BUILD_DIR)/fuzz_wasm_shim
 FUZZ_WASM_MODULE_BIN := $(BUILD_DIR)/fuzz_wasm_module
 TEST_SYSCALL_ARGS_BIN := $(BUILD_DIR)/test_syscall_args
+TEST_COMPONENT_STATE_BIN := $(BUILD_DIR)/test_component_state
 FUZZ_SYSCALL_ARGS_BIN := $(BUILD_DIR)/fuzz_syscall_args
 SYSCALL_ARGS_SOURCE := kernel/wasm/syscall_args.zig
 SYSCALL_ARGS_OBJ := $(BUILD_DIR)/syscall_args.o
@@ -215,7 +218,8 @@ KERNEL_OBJECTS += $(WASM_SHIM_OBJECTS) $(WAMR_PLATFORM_OBJ) $(WAMR_OBJECTS) \
 .PHONY: all check-tools kernel iso run run-debug test fuzz-heap \
 	fuzz-object-store fuzz-wasm-shim fuzz-wasm-module fuzz-syscall-args \
 	model-check model-check-negative \
-	write-ordering-negative crash-test hello-wasm counter-wasm verify-wamr clean
+	write-ordering-negative crash-test wow-demo hello-wasm counter-wasm \
+	verify-wamr clean
 
 all: iso
 
@@ -439,7 +443,7 @@ $(ISO_IMAGE): $(KERNEL_ELF) $(LIMINE_CONFIG) $(COUNTER_WASM)
 		-o $(ISO_IMAGE)
 	$(LIMINE_DIR)/limine bios-install $(ISO_IMAGE)
 
-test: $(TEST_PMM_BIN) $(TEST_HEAP_BIN) $(TEST_OBJECT_TABLE_BIN) $(TEST_OBJECT_HEADER_BIN) $(TEST_WAL_BIN) $(TEST_OBJECT_STORE_BIN) $(TEST_WRITE_ORDERING_BIN) $(TEST_WASM_SHIM_BIN) $(TEST_WASM_MODULE_BIN) $(TEST_SYSCALL_ARGS_BIN)
+test: $(TEST_PMM_BIN) $(TEST_HEAP_BIN) $(TEST_OBJECT_TABLE_BIN) $(TEST_OBJECT_HEADER_BIN) $(TEST_WAL_BIN) $(TEST_OBJECT_STORE_BIN) $(TEST_WRITE_ORDERING_BIN) $(TEST_WASM_SHIM_BIN) $(TEST_WASM_MODULE_BIN) $(TEST_SYSCALL_ARGS_BIN) $(TEST_COMPONENT_STATE_BIN)
 	$(TEST_PMM_BIN)
 	$(TEST_HEAP_BIN)
 	$(TEST_OBJECT_TABLE_BIN)
@@ -450,6 +454,7 @@ test: $(TEST_PMM_BIN) $(TEST_HEAP_BIN) $(TEST_OBJECT_TABLE_BIN) $(TEST_OBJECT_HE
 	$(TEST_WASM_SHIM_BIN)
 	$(TEST_WASM_MODULE_BIN)
 	$(TEST_SYSCALL_ARGS_BIN)
+	$(TEST_COMPONENT_STATE_BIN)
 
 $(TEST_PMM_BIN): $(PMM_SOURCE) $(HOSTED_DIR)/test_pmm.c $(HOSTED_DIR)/stubs.c $(HOSTED_DIR)/fake_memory_map.c $(HOSTED_DIR)/fake_memory_map.h $(HOSTED_DIR)/check.h Makefile
 	mkdir -p $(BUILD_DIR)
@@ -501,6 +506,10 @@ $(TEST_WASM_SHIM_BIN): $(WASM_SHIM_SOURCES) $(HOSTED_DIR)/test_wasm_shim.c $(HOS
 $(FUZZ_WASM_SHIM_BIN): $(WASM_SHIM_SOURCES) $(HOSTED_DIR)/fuzz_wasm_shim.c kernel/wasm/shim/jani_libc.h Makefile
 	mkdir -p $(BUILD_DIR)
 	$(HOST_CC) $(FUZZ_CFLAGS) -DJANI_HOSTED $(WASM_SHIM_SOURCES) $(HOSTED_DIR)/fuzz_wasm_shim.c -o $(FUZZ_WASM_SHIM_BIN)
+
+$(TEST_COMPONENT_STATE_BIN): $(INSTANCE_STATE_SOURCE) $(STRING_SOURCE) $(OBJECT_HEADER_VALIDATE_HOSTED_OBJ) $(HOSTED_DIR)/test_component_state.c $(HOSTED_DIR)/check.h kernel/wasm/component.h kernel/wasm/instance_state.h Makefile
+	mkdir -p $(BUILD_DIR)
+	$(HOST_CC) $(HOST_CFLAGS) $(INSTANCE_STATE_SOURCE) $(STRING_SOURCE) $(HOSTED_DIR)/test_component_state.c $(OBJECT_HEADER_VALIDATE_HOSTED_OBJ) -o $(TEST_COMPONENT_STATE_BIN)
 
 $(SYSCALL_ARGS_HOSTED_OBJ): $(SYSCALL_ARGS_SOURCE) Makefile
 	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
@@ -610,6 +619,9 @@ run-debug: $(ISO_IMAGE)
 
 crash-test: $(ISO_IMAGE)
 	tools/crash_test_qemu.sh $(CRASH_CYCLES)
+
+wow-demo: $(ISO_IMAGE)
+	tools/wow_demo_qemu.sh $(WOW_CYCLES) $(WOW_SECONDS)
 
 clean:
 	rm -rf $(BUILD_DIR)
