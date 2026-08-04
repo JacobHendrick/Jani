@@ -222,7 +222,7 @@ static int run_heap_test(void) {
     return 1;
 }
 
-#define DEMO_SECTORS 4096u
+#define DEMO_SECTORS 16384u
 #define DEMO_TABLE_CAPACITY 64u
 #define DEMO_CACHE_BYTES 98304u
 #define DEMO_ARENA_BYTES 16384u
@@ -490,9 +490,49 @@ static int run_store_demo(void) {
 }
 
 #define COMPONENT_TICK_PERIOD 100u
+#define COMPONENT_COLLECT_EVERY 8u
 
 static struct component demo_component;
 static int demo_component_ready;
+
+static int run_component_leak_test(
+    const uint8_t *module_bytes,
+    size_t module_length
+) {
+    struct component probe;
+    uint64_t after_first;
+    uint64_t after_second;
+
+    if (!jani_wasm_instance_create(module_bytes, module_length, &probe.module,
+                                   &probe.instance, &probe.exec_env,
+                                   &probe.module_bytes)) {
+        kputs("ERROR: leak test could not instantiate\n");
+        return 0;
+    }
+    jani_wasm_instance_destroy(probe.module, probe.instance, probe.exec_env,
+                               probe.module_bytes);
+    after_first = kheap_used_bytes();
+
+    if (!jani_wasm_instance_create(module_bytes, module_length, &probe.module,
+                                   &probe.instance, &probe.exec_env,
+                                   &probe.module_bytes)) {
+        kputs("ERROR: leak test could not reinstantiate\n");
+        return 0;
+    }
+    jani_wasm_instance_destroy(probe.module, probe.instance, probe.exec_env,
+                               probe.module_bytes);
+    after_second = kheap_used_bytes();
+
+    if (after_second != after_first) {
+        printk("ERROR: instantiate leaked %d bytes on the second pass\n",
+               (int)(after_second - after_first));
+        return 0;
+    }
+
+    printk("component leak test ok (high-water steady at %d bytes)\n",
+           (int)after_second);
+    return 1;
+}
 
 static int run_component_demo(void) {
     struct object_id roots[COMPONENT_MAX];
@@ -519,6 +559,10 @@ static int run_component_demo(void) {
     }
 
     if (!jani_wasm_runtime_start()) {
+        return 0;
+    }
+
+    if (!run_component_leak_test(module_bytes, module_length)) {
         return 0;
     }
 
@@ -575,6 +619,14 @@ static void component_tick_forever(void) {
         if (!component_commit(&demo_store, &demo_component)) {
             kputs("ERROR: component commit failed\n");
             demo_component_ready = 0;
+            continue;
+        }
+
+        if ((demo_component.logical_time % COMPONENT_COLLECT_EVERY) == 0) {
+            if (!object_store_collect(&demo_store)) {
+                kputs("ERROR: component store collect failed\n");
+                demo_component_ready = 0;
+            }
         }
     }
 }

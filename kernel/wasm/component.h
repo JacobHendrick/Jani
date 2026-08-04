@@ -16,6 +16,20 @@
 #define COMPONENT_TYPE_MODULE UINT64_C(3)
 #define COMPONENT_TYPE_CAPTABLE UINT64_C(4)
 #define COMPONENT_TYPE_INSTANCE_STATE UINT64_C(5)
+#define COMPONENT_TYPE_DATA UINT64_C(6)
+
+#define COMPONENT_DATA_ID_HIGH UINT64_C(3)
+
+#define COMPONENT_CAPTABLE_MAGIC UINT64_C(0x4A414E495F434150)
+#define COMPONENT_CAPTABLE_FORMAT_VERSION UINT32_C(1)
+#define COMPONENT_CAPTABLE_HEADER_SIZE 32u
+
+#define JANI_EINVAL (-1)
+#define JANI_EPERM (-2)
+#define JANI_ENOSPC (-3)
+#define JANI_EAGAIN (-4)
+#define JANI_ERANGE (-5)
+#define JANI_ENOENT (-6)
 
 #define COMPONENT_MAX 4u
 #define COMPONENT_CAP_SLOTS 16u
@@ -66,6 +80,20 @@ _Static_assert(
     "component root record must be exactly 72 bytes"
 );
 
+struct component_captable_header {
+    uint64_t magic;
+    uint32_t format_version;
+    uint32_t slot_count;
+    uint64_t next_object_sequence;
+    uint32_t payload_crc32c;
+    uint32_t _reserved;
+};
+
+_Static_assert(
+    sizeof(struct component_captable_header) == COMPONENT_CAPTABLE_HEADER_SIZE,
+    "capability table header must be exactly 32 bytes"
+);
+
 struct component_capability {
     struct object_id object;
     uint32_t rights;
@@ -87,10 +115,16 @@ struct component {
 
     struct component_capability capabilities[COMPONENT_CAP_SLOTS];
     uint32_t capability_count;
+    uint64_t next_object_sequence;
+    uint32_t capabilities_dirty;
+    uint32_t exited;
+    int32_t exit_code;
 
+    struct object_store *store;
     void *module;
     void *instance;
     void *exec_env;
+    void *module_bytes;
 };
 
 struct object_id component_make_id(uint64_t high, uint64_t low);
@@ -107,6 +141,31 @@ int component_capability_insert(
     uint32_t rights,
     uint32_t badge,
     uint32_t *slot_out
+);
+
+int component_captable_write(
+    struct object_store *store,
+    struct component *component
+);
+
+int component_captable_read(
+    struct object_store *store,
+    struct component *component
+);
+
+int component_mailbox_push(
+    struct component *component,
+    const uint8_t *bytes,
+    uint32_t length,
+    int32_t capability_slot
+);
+
+int component_mailbox_pop(
+    struct component *component,
+    uint8_t *bytes_out,
+    uint32_t capacity,
+    uint32_t *length_out,
+    int32_t *capability_slot_out
 );
 
 int component_registry_load(

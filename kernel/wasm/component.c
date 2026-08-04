@@ -25,6 +25,10 @@ int component_capability_find(
         return 0;
     }
 
+    if (object_id_is_zero(object)) {
+        return 0;
+    }
+
     for (index = 0; index < component->capability_count; index++) {
         if (object_id_equal(component->capabilities[index].object, object)) {
             *slot_out = index;
@@ -48,21 +52,34 @@ int component_capability_insert(
         return 0;
     }
 
+    if (object_id_is_zero(object)) {
+        return 0;
+    }
+
     if (component_capability_find(component, object, &slot)) {
         component->capabilities[slot].rights |= rights;
+        component->capabilities_dirty = 1;
         *slot_out = slot;
         return 1;
     }
 
-    if (component->capability_count >= COMPONENT_CAP_SLOTS) {
-        return 0;
+    for (slot = 0; slot < component->capability_count; slot++) {
+        if (object_id_is_zero(component->capabilities[slot].object)) {
+            break;
+        }
     }
 
-    slot = component->capability_count;
+    if (slot == component->capability_count) {
+        if (component->capability_count >= COMPONENT_CAP_SLOTS) {
+            return 0;
+        }
+        component->capability_count = slot + 1;
+    }
+
     component->capabilities[slot].object = object;
     component->capabilities[slot].rights = rights;
     component->capabilities[slot].badge = badge;
-    component->capability_count = slot + 1;
+    component->capabilities_dirty = 1;
 
     *slot_out = slot;
     return 1;
@@ -70,6 +87,166 @@ int component_capability_insert(
 
 static struct object_id component_sequence_id(uint64_t sequence) {
     return component_make_id(COMPONENT_SEQUENCE_ID_HIGH, sequence);
+}
+
+#define CAPTABLE_PAYLOAD_BYTES \
+    (COMPONENT_CAPTABLE_HEADER_SIZE + \
+     (COMPONENT_CAP_SLOTS * sizeof(struct component_capability)))
+
+int component_captable_write(
+    struct object_store *store,
+    struct component *component
+) {
+    uint8_t buffer[CAPTABLE_PAYLOAD_BYTES];
+    struct component_captable_header captable;
+
+    if ((store == NULL) || (component == NULL)) {
+        return 0;
+    }
+
+    memset(buffer, 0, sizeof(buffer));
+    memcpy(buffer + COMPONENT_CAPTABLE_HEADER_SIZE, component->capabilities,
+           sizeof(component->capabilities));
+
+    memset(&captable, 0, sizeof(captable));
+    captable.magic = COMPONENT_CAPTABLE_MAGIC;
+    captable.format_version = COMPONENT_CAPTABLE_FORMAT_VERSION;
+    captable.slot_count = component->capability_count;
+    captable.next_object_sequence = component->next_object_sequence;
+    captable.payload_crc32c = object_crc32c(
+        buffer + COMPONENT_CAPTABLE_HEADER_SIZE,
+        sizeof(component->capabilities)
+    );
+
+    memcpy(buffer, &captable, COMPONENT_CAPTABLE_HEADER_SIZE);
+
+    if (!object_store_put(store, component->captable_id,
+                          component_make_id(0, COMPONENT_TYPE_CAPTABLE),
+                          component->root_id, component->root_id,
+                          component->logical_time, buffer, sizeof(buffer))) {
+        return 0;
+    }
+
+    component->capabilities_dirty = 0;
+    return 1;
+}
+
+int component_captable_read(
+    struct object_store *store,
+    struct component *component
+) {
+    struct component_captable_header captable;
+    struct object_header header;
+    const uint8_t *payload;
+    size_t payload_size;
+
+    if ((store == NULL) || (component == NULL)) {
+        return 0;
+    }
+
+    if (!object_store_get(store, component->captable_id, &header, &payload,
+                          &payload_size)) {
+        return 0;
+    }
+
+    if (payload_size != CAPTABLE_PAYLOAD_BYTES) {
+        return 0;
+    }
+
+    memcpy(&captable, payload, COMPONENT_CAPTABLE_HEADER_SIZE);
+
+    if ((captable.magic != COMPONENT_CAPTABLE_MAGIC) ||
+        (captable.format_version != COMPONENT_CAPTABLE_FORMAT_VERSION) ||
+        (captable._reserved != 0) ||
+        (captable.slot_count > COMPONENT_CAP_SLOTS)) {
+        return 0;
+    }
+
+    if (object_crc32c(payload + COMPONENT_CAPTABLE_HEADER_SIZE,
+                      sizeof(component->capabilities)) !=
+        captable.payload_crc32c) {
+        return 0;
+    }
+
+    memcpy(component->capabilities, payload + COMPONENT_CAPTABLE_HEADER_SIZE,
+           sizeof(component->capabilities));
+    component->capability_count = captable.slot_count;
+    component->next_object_sequence = captable.next_object_sequence;
+    component->capabilities_dirty = 0;
+    return 1;
+}
+
+int component_mailbox_push(
+    struct component *component,
+    const uint8_t *bytes,
+    uint32_t length,
+    int32_t capability_slot
+) {
+    uint32_t header[2];
+    uint32_t needed;
+
+    if ((component == NULL) || ((length != 0) && (bytes == NULL))) {
+        return 0;
+    }
+
+    needed = (uint32_t)sizeof(header) + length;
+    if (needed > (COMPONENT_MAILBOX_BYTES - component->mailbox_used)) {
+        return 0;
+    }
+
+    header[0] = length;
+    header[1] = (uint32_t)capability_slot;
+
+    memcpy(component->mailbox + component->mailbox_used, header,
+           sizeof(header));
+    if (length != 0) {
+        memcpy(component->mailbox + component->mailbox_used + sizeof(header),
+               bytes, length);
+    }
+
+    component->mailbox_used += needed;
+    return 1;
+}
+
+int component_mailbox_pop(
+    struct component *component,
+    uint8_t *bytes_out,
+    uint32_t capacity,
+    uint32_t *length_out,
+    int32_t *capability_slot_out
+) {
+    uint32_t header[2];
+    uint32_t frame;
+
+    if ((component == NULL) || (length_out == NULL) ||
+        (capability_slot_out == NULL)) {
+        return 0;
+    }
+
+    if (component->mailbox_used < sizeof(header)) {
+        return 0;
+    }
+
+    memcpy(header, component->mailbox, sizeof(header));
+    frame = (uint32_t)sizeof(header) + header[0];
+
+    if ((frame > component->mailbox_used) || (header[0] > capacity)) {
+        return 0;
+    }
+
+    if ((header[0] != 0) && (bytes_out != NULL)) {
+        memcpy(bytes_out, component->mailbox + sizeof(header), header[0]);
+    }
+
+    component->mailbox_used -= frame;
+    if (component->mailbox_used != 0) {
+        memmove(component->mailbox, component->mailbox + frame,
+                component->mailbox_used);
+    }
+
+    *length_out = header[0];
+    *capability_slot_out = (int32_t)header[1];
+    return 1;
 }
 
 static uint8_t *component_scratch;
@@ -306,6 +483,11 @@ int component_commit(
         return 0;
     }
 
+    if (component->capabilities_dirty &&
+        !component_captable_write(store, component)) {
+        return 0;
+    }
+
     result = 0;
     if (instance_state_serialize(component, memory, memory_size, scratch,
                                  needed, &written)) {
@@ -329,6 +511,7 @@ int component_install(
     struct object_id roots[COMPONENT_MAX];
     uint64_t sequence;
     size_t count;
+    uint32_t root_slot;
 
     if ((store == NULL) || (module_bytes == NULL) ||
         (component_out == NULL) || (module_size == 0)) {
@@ -349,6 +532,15 @@ int component_install(
     component_out->captable_id = component_sequence_id(sequence + 1);
     component_out->state_id = component_sequence_id(sequence + 2);
     component_out->root_id = component_sequence_id(sequence + 3);
+    component_out->store = store;
+    component_out->next_object_sequence = 1;
+
+    if (!component_capability_insert(component_out, component_out->root_id,
+                                     COMPONENT_RIGHTS_READ |
+                                     COMPONENT_RIGHTS_SEND,
+                                     0, &root_slot)) {
+        return 0;
+    }
 
     if (!object_store_put(store, component_out->module_id,
                           component_make_id(0, COMPONENT_TYPE_MODULE),
@@ -357,37 +549,42 @@ int component_install(
         return 0;
     }
 
-    if (!object_store_put(store, component_out->captable_id,
-                          component_make_id(0, COMPONENT_TYPE_CAPTABLE),
-                          component_out->root_id, component_out->root_id, 0,
-                          (const uint8_t *)component_out->capabilities,
-                          sizeof(component_out->capabilities))) {
+    if (!component_captable_write(store, component_out)) {
         return 0;
     }
 
     if (!jani_wasm_instance_create(module_bytes, module_size,
                                    &component_out->module,
                                    &component_out->instance,
-                                   &component_out->exec_env)) {
+                                   &component_out->exec_env,
+                                   &component_out->module_bytes)) {
         return 0;
     }
 
     jani_wasm_set_current_component(component_out);
     if (!jani_wasm_instance_call(component_out->instance,
                                  component_out->exec_env, "jani_init")) {
+        component_release(component_out);
         return 0;
     }
 
     if (!component_commit(store, component_out)) {
+        component_release(component_out);
         return 0;
     }
 
     if (!component_root_write(store, component_out)) {
+        component_release(component_out);
         return 0;
     }
 
     roots[count] = component_out->root_id;
-    return component_registry_store(store, roots, count + 1, sequence + 4);
+    if (!component_registry_store(store, roots, count + 1, sequence + 4)) {
+        component_release(component_out);
+        return 0;
+    }
+
+    return 1;
 }
 
 int component_resume(
@@ -397,7 +594,6 @@ int component_resume(
 ) {
     struct object_header header;
     const uint8_t *payload;
-    uint8_t *module_copy;
     uint8_t *memory;
     size_t payload_size;
     size_t module_size;
@@ -421,44 +617,36 @@ int component_resume(
     }
 
     module_size = payload_size;
-    module_copy = kmalloc(module_size);
-    if (module_copy == NULL) {
-        return 0;
-    }
-    memcpy(module_copy, payload, module_size);
-
-    created = jani_wasm_instance_create(module_copy, module_size,
+    created = jani_wasm_instance_create(payload, module_size,
                                         &component_out->module,
                                         &component_out->instance,
-                                        &component_out->exec_env);
-    kfree(module_copy);
-
+                                        &component_out->exec_env,
+                                        &component_out->module_bytes);
     if (!created) {
         return 0;
     }
 
     if (!object_store_get(store, component_out->state_id, &header, &payload,
-                          &payload_size)) {
+                          &payload_size) ||
+        !instance_state_header_validate(payload, payload_size, NULL,
+                                        &saved_memory_size) ||
+        !jani_wasm_instance_memory_grow(component_out->instance,
+                                        saved_memory_size) ||
+        !jani_wasm_instance_memory(component_out->instance, &memory,
+                                   &memory_size) ||
+        !instance_state_deserialize(component_out, memory, memory_size,
+                                    payload, payload_size)) {
+        component_release(component_out);
         return 0;
     }
 
-    if (!instance_state_header_validate(payload, payload_size, NULL,
-                                        &saved_memory_size)) {
+    if (!component_captable_read(store, component_out)) {
+        component_release(component_out);
         return 0;
     }
 
-    if (!jani_wasm_instance_memory_grow(component_out->instance,
-                                        saved_memory_size)) {
-        return 0;
-    }
-
-    if (!jani_wasm_instance_memory(component_out->instance, &memory,
-                                   &memory_size)) {
-        return 0;
-    }
-
-    return instance_state_deserialize(component_out, memory, memory_size,
-                                      payload, payload_size);
+    component_out->store = store;
+    return 1;
 }
 
 int component_invoke_timer(struct component *component) {
@@ -478,6 +666,10 @@ int component_release(struct component *component) {
     if (component == NULL) {
         return 0;
     }
+
+    jani_wasm_instance_destroy(component->module, component->instance,
+                               component->exec_env, component->module_bytes);
+    jani_wasm_set_current_component(NULL);
 
     memset(component, 0, sizeof(*component));
     return 1;

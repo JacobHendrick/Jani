@@ -3,6 +3,7 @@
 #include "wasm_export.h"
 
 #include "component.h"
+#include "syscalls.h"
 #include "../lib/printk.h"
 #include "../lib/string.h"
 #include "../mm/heap.h"
@@ -23,63 +24,15 @@ static void jani_wasm_wfree(void *ptr) {
     kfree(ptr);
 }
 
-static int32_t jani_log_wrapper(
-    wasm_exec_env_t exec_env,
-    uint32_t offset,
-    uint32_t length
-) {
-    wasm_module_inst_t instance;
-    const char *text;
-    uint32_t index;
-
-    instance = wasm_runtime_get_module_inst(exec_env);
-
-    if (!wasm_runtime_validate_app_addr(instance, (uint64_t)offset,
-                                           (uint64_t)length)) {
-        wasm_runtime_set_exception(instance, "jani_log: address out of bounds");
-        return -1;
-    }
-
-    text = (const char *)wasm_runtime_addr_app_to_native(instance, (uint64_t)offset);
-
-    for (index = 0; index < length; index++) {
-        printk("%c", text[index]);
-    }
-
-    return (int32_t)length;
-}
-
-static struct component *jani_current_component;
-
 void jani_wasm_set_current_component(struct component *component) {
-    jani_current_component = component;
+    jani_syscall_set_current(component);
 }
-
-static int32_t jani_timer_set_wrapper(
-    wasm_exec_env_t exec_env,
-    int64_t delay_ticks
-) {
-    (void)exec_env;
-
-    if ((jani_current_component == NULL) || (delay_ticks < 0)) {
-        return -1;
-    }
-
-    jani_current_component->timer_deadline =
-        jani_current_component->logical_time + (uint64_t)delay_ticks;
-    jani_current_component->timer_armed = 1;
-    return 0;
-}
-
-static NativeSymbol jani_native_symbols[] = {
-    { "jani_log", (void*)jani_log_wrapper, "(ii)i", NULL },
-    { "jani_timer_set", (void*)jani_timer_set_wrapper, "(I)i", NULL },
-};
 
 static int jani_runtime_started;
 
 int jani_wasm_runtime_start(void) {
     RuntimeInitArgs init_args;
+    uint32_t symbol_count;
 
     if (jani_runtime_started) {
         return 1;
@@ -91,9 +44,8 @@ int jani_wasm_runtime_start(void) {
     init_args.mem_alloc_option.allocator.realloc_func = (void *)jani_wasm_wrealloc;
     init_args.mem_alloc_option.allocator.free_func = (void *)jani_wasm_wfree;
     init_args.native_module_name = "env";
-    init_args.native_symbols = jani_native_symbols;
-    init_args.n_native_symbols =
-        (uint32_t)(sizeof(jani_native_symbols) / sizeof(NativeSymbol));
+    init_args.native_symbols = jani_syscall_symbols(&symbol_count);
+    init_args.n_native_symbols = symbol_count;
 
     if (!wasm_runtime_full_init(&init_args)) {
         kputs("ERROR: wamr: runtime init failed\n");
@@ -118,27 +70,38 @@ int jani_wasm_instance_create(
     size_t length,
     void **module_out,
     void **instance_out,
-    void **exec_env_out
+    void **exec_env_out,
+    void **owned_bytes_out
 ) {
     char error_buffer[JANI_WASM_ERROR_SIZE];
     wasm_module_t module;
     wasm_module_inst_t instance;
     wasm_exec_env_t exec_env;
+    uint8_t *owned;
 
-    if ((bytes == NULL) || (module_out == NULL) ||
-        (instance_out == NULL) || (exec_env_out == NULL)) {
+    if ((bytes == NULL) || (module_out == NULL) || (instance_out == NULL) ||
+        (exec_env_out == NULL) || (owned_bytes_out == NULL)) {
         return 0;
     }
 
     *module_out = NULL;
     *instance_out = NULL;
     *exec_env_out = NULL;
+    *owned_bytes_out = NULL;
     error_buffer[0] = '\0';
 
-    module = wasm_runtime_load((uint8_t *)bytes, (uint32_t)length,
+    owned = kmalloc(length);
+    if (owned == NULL) {
+        kputs("ERROR: wamr: no memory for the module image\n");
+        return 0;
+    }
+    memcpy(owned, bytes, length);
+
+    module = wasm_runtime_load(owned, (uint32_t)length,
                                error_buffer, sizeof(error_buffer));
     if (module == NULL) {
         printk("ERROR: wamr: load failed: %s\n", error_buffer);
+        kfree(owned);
         return 0;
     }
 
@@ -148,6 +111,7 @@ int jani_wasm_instance_create(
     if (instance == NULL) {
         printk("ERROR: wamr: instantiate failed: %s\n", error_buffer);
         wasm_runtime_unload(module);
+        kfree(owned);
         return 0;
     }
 
@@ -156,16 +120,23 @@ int jani_wasm_instance_create(
         kputs("ERROR: wamr: create exec env failed\n");
         wasm_runtime_deinstantiate(instance);
         wasm_runtime_unload(module);
+        kfree(owned);
         return 0;
     }
 
     *module_out = module;
     *instance_out = instance;
     *exec_env_out = exec_env;
+    *owned_bytes_out = owned;
     return 1;
 }
 
-void jani_wasm_instance_destroy(void *module, void *instance, void *exec_env) {
+void jani_wasm_instance_destroy(
+    void *module,
+    void *instance,
+    void *exec_env,
+    void *owned_bytes
+) {
     if (exec_env != NULL) {
         wasm_runtime_destroy_exec_env((wasm_exec_env_t)exec_env);
     }
@@ -174,6 +145,9 @@ void jani_wasm_instance_destroy(void *module, void *instance, void *exec_env) {
     }
     if (module != NULL) {
         wasm_runtime_unload((wasm_module_t)module);
+    }
+    if (owned_bytes != NULL) {
+        kfree(owned_bytes);
     }
 }
 

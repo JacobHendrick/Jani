@@ -17,10 +17,16 @@ int jani_wasm_instance_create(
     size_t length,
     void **module_out,
     void **instance_out,
-    void **exec_env_out
+    void **exec_env_out,
+    void **owned_bytes_out
 );
 
-void jani_wasm_instance_destroy(void *module, void *instance, void *exec_env);
+void jani_wasm_instance_destroy(
+    void *module,
+    void *instance,
+    void *exec_env,
+    void *owned_bytes
+);
 
 int jani_wasm_instance_memory(
     void *instance,

@@ -504,4 +504,95 @@ runs each.
 Still assumed, and now the sharpest single unknown in the project: that the
 physical device honors a flush. Only real hardware settles it.
 
+## 2026-08-04 — The wow demo lands, and instantiating twice finds a use-after-free
+
+Slice 2's milestone works. A counter component ticks over serial, QEMU is
+powered off outright, and the next boot continues the count. Verified across
+three power cycles by hand and then turned into `make wow-demo`, which does the
+same thing unattended and asserts the result.
+
+**The gate accepts two answers, and that is the design.** The component prints
+inside its handler and commits after the handler returns. A kill in that window
+loses the printed tick, so the next boot repeats it; a kill after the commit
+advances. Both are correct. Lower means a committed tick was lost, higher means
+one was double-counted. A gate asserting a single value would fail at random
+forever and eventually be switched off. Runs so far have exercised both
+branches: one run repeated on two of three cycles, a later run advanced on all
+three.
+
+The gate also fails if a resume boot reports installation, or if `jani_init`
+runs on resume. That is the specific way this demo could become theatre while
+still printing plausible numbers.
+
+**Four things running it found that reading it did not.**
+
+Linear memory was 1.08 MB, not 64 KiB. Zig reserves a 1 MiB wasm stack by
+default — 17 pages — and WAMR appends its 16 KiB app heap. The counter uses
+about fifty bytes of it. `--stack 16384` brings the module to one page and the
+instance-state object to 81,984 bytes. Worth knowing before concluding that
+copying whole linear memory per tick is too expensive: here the cost was never
+the memory, it was an unused stack reservation.
+
+`jani_log` was registered as `"(ii)"` returning void while the spec declares it
+returning bytes written. WAMR refused to link the import against a module
+expecting `i32`. The host side was wrong. This is the first evidence for D3.6 —
+declaring the whole ABI up front caught a mismatch that would otherwise have
+surfaced a slice later, against components already written.
+
+`DEMO_CACHE_BYTES` at 8192 capped objects at 8,064 bytes. `object_store_get` is
+bounded by the same capacity at line 977, not just `put` at 835, so raising it
+unblocks reading as well as writing.
+
+`demo_verify_all` applied the store demo's payload pattern to every table entry,
+so component objects failed it on the second boot. The pattern check is now
+scoped to the demo's own four ids; the structural checks still cover all of them.
+
+**The leak test found a use-after-free in ten seconds by doing the one thing
+nothing else did: instantiating twice.** `wasm_runtime_load` **mutates the
+buffer it is given**. The second load of the same bytes fails with "invalid
+import kind" because the first load rewrote them. Slice 1 never noticed — it
+loaded the Limine buffer exactly once per boot.
+
+The consequence was worse than the symptom. `component_resume` copied the module
+bytes into a `kmalloc` buffer, instantiated, then freed the copy — but WAMR's
+classic interpreter holds pointers into that buffer for the code section. The
+demo worked only because the freed memory had not been reused yet. It would have
+surfaced later as impossible-looking interpreter corruption with no connection to
+the free that caused it. `jani_wasm_instance_create` now takes its own copy and
+`jani_wasm_instance_destroy` frees it, so the image lives exactly as long as the
+module does.
+
+`component_release` also never destroyed the WAMR instance at all, and the
+failure paths in `install` and `resume` returned without releasing. Both fixed.
+
+**The tick loop needed garbage collection.** Every tick writes a new 82 KB
+version by COW and nothing reclaimed the old ones, so the store filled after
+roughly a dozen ticks and the first commit after that failed. Collection now
+runs every eight ticks, and `DEMO_SECTORS` went from 4096 to 16384 so an 8 MiB
+region holds a useful number of versions. Worth remembering: unbounded COW
+growth is the default for anything committing on a loop.
+
+All twelve syscalls are implemented in `kernel/wasm/syscalls.c`, and the counter
+exercises sixteen assertions across ten of them on first boot — create, size,
+write, read, round trip, short-read clamping, out-of-bounds rejection, cap drop,
+use-after-drop rejection, self, empty receive, send, receive, payload, and
+attached capability. The capability table now persists, so handles survive a
+resume; it is written only when dirty, keeping it off the per-tick path.
+
+Two rough edges cleaned up. The tick loop ran inline capped at eight iterations
+because `pit_init` happens later in `kmain` than the demo did; it now lives in
+the idle path and wakes on `hlt`. And `component_commit` allocated and freed an
+82 KB buffer every tick, which at 1 Hz forever is pointless churn; one scratch
+buffer is reserved and grown only when needed.
+
+Gates: `make test` 4,439 checks across twelve binaries, `make kernel` links,
+`make crash-test` 25/25 with `RECOVERY OK`, `make wow-demo` 3/3 cycles,
+`write-ordering-negative` detects both a removed and a dropped barrier, three
+fuzz campaigns clean at 10,000 runs.
+
+Still assumed: that the physical device honors a flush. And `make wow-demo` has
+no negative control — it catches the failures it has assertions for, but nothing
+proves it would catch a subtly broken resume the way
+`write-ordering-negative` proves its rig has teeth.
+
 <!-- Next entry goes here -->
