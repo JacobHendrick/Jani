@@ -1,0 +1,109 @@
+#ifndef JANI_KERNEL_WASM_COMPONENT_H
+#define JANI_KERNEL_WASM_COMPONENT_H
+
+#include <stddef.h>
+#include <stdint.h>
+
+#include "../obj/object_id.h"
+#include "../obj/object_store.h"
+
+#define COMPONENT_REGISTRY_ID_HIGH UINT64_C(1)
+#define COMPONENT_REGISTRY_ID_LOW UINT64_C(0)
+#define COMPONENT_SEQUENCE_ID_HIGH UINT64_C(2)
+
+#define COMPONENT_TYPE_REGISTRY UINT64_C(1)
+#define COMPONENT_TYPE_ROOT UINT64_C(2)
+#define COMPONENT_TYPE_MODULE UINT64_C(3)
+#define COMPONENT_TYPE_CAPTABLE UINT64_C(4)
+#define COMPONENT_TYPE_INSTANCE_STATE UINT64_C(5)
+
+#define COMPONENT_MAX 4u
+#define COMPONENT_CAP_SLOTS 16u
+#define COMPONENT_MAILBOX_BYTES 512u
+
+#define COMPONENT_RIGHTS_READ UINT32_C(0x1)
+#define COMPONENT_RIGHTS_WRITE UINT32_C(0x2)
+#define COMPONENT_RIGHTS_SEND UINT32_C(0x4)
+#define COMPONENT_RIGHTS_GRANT UINT32_C(0x8)
+
+struct component_capability {
+    struct object_id object;
+    uint32_t rights;
+    uint32_t badge;
+};
+
+struct component {
+    struct object_id root_id;
+    struct object_id module_id;
+    struct object_id captable_id;
+    struct object_id state_id;
+
+    uint64_t logical_time;
+    uint64_t timer_deadline;
+    uint32_t timer_armed;
+
+    uint32_t mailbox_used;
+    uint8_t mailbox[COMPONENT_MAILBOX_BYTES];
+
+    struct component_capability capabilities[COMPONENT_CAP_SLOTS];
+    uint32_t capability_count;
+
+    void *module;
+    void *instance;
+    void *exec_env;
+};
+
+struct object_id component_make_id(uint64_t high, uint64_t low);
+
+int component_capability_find(
+    const struct component *component,
+    struct object_id object,
+    uint32_t *slot_out
+);
+
+int component_capability_insert(
+    struct component *component,
+    struct object_id object,
+    uint32_t rights,
+    uint32_t badge,
+    uint32_t *slot_out
+);
+
+int component_registry_load(
+    struct object_store *store,
+    struct object_id *roots_out,
+    size_t capacity,
+    size_t *count_out,
+    uint64_t *next_sequence_out
+);
+
+int component_registry_store(
+    struct object_store *store,
+    const struct object_id *roots,
+    size_t count,
+    uint64_t next_sequence
+);
+
+int component_install(
+    struct object_store *store,
+    const uint8_t *module_bytes,
+    size_t module_size,
+    struct component *component_out
+);
+
+int component_resume(
+    struct object_store *store,
+    struct object_id root_id,
+    struct component *component_out
+);
+
+int component_commit(
+    struct object_store *store,
+    struct component *component
+);
+
+int component_invoke_timer(struct component *component);
+
+int component_release(struct component *component);
+
+#endif

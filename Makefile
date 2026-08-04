@@ -200,12 +200,17 @@ WAMR_ASFLAGS := -target x86_64-freestanding-none -g
 
 WASM_RUNTIME_OBJ := $(BUILD_DIR)/wasm_runtime.o
 WASM_RUNTIME_SOURCE := kernel/wasm/runtime.c
+COMPONENT_OBJ := $(BUILD_DIR)/component.o
+COMPONENT_SOURCE := kernel/wasm/component.c
+INSTANCE_STATE_OBJ := $(BUILD_DIR)/instance_state.o
+INSTANCE_STATE_SOURCE := kernel/wasm/instance_state.c
 
 # Appended, not folded into the KERNEL_OBJECTS assignment above: that uses :=
 # and is evaluated before this block exists, so an inline reference there
 # expands to nothing and links a WAMR-less kernel without complaining.
 KERNEL_OBJECTS += $(WASM_SHIM_OBJECTS) $(WAMR_PLATFORM_OBJ) $(WAMR_OBJECTS) \
-	$(MODULE_VALIDATE_OBJ) $(SYSCALL_ARGS_OBJ) $(WASM_RUNTIME_OBJ)
+	$(MODULE_VALIDATE_OBJ) $(SYSCALL_ARGS_OBJ) $(WASM_RUNTIME_OBJ) \
+	$(COMPONENT_OBJ) $(INSTANCE_STATE_OBJ)
 
 .PHONY: all check-tools kernel iso run run-debug test fuzz-heap \
 	fuzz-object-store fuzz-wasm-shim fuzz-wasm-module fuzz-syscall-args \
@@ -571,6 +576,14 @@ $(SYSCALL_ARGS_OBJ): $(SYSCALL_ARGS_SOURCE) Makefile
 $(WASM_RUNTIME_OBJ): $(WASM_RUNTIME_SOURCE) Makefile
 	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
 	$(ZIG_ENV) $(CC) $(CFLAGS) $(WAMR_INCLUDES) $(WAMR_DEFINES) -c $(WASM_RUNTIME_SOURCE) -o $(WASM_RUNTIME_OBJ)
+
+$(COMPONENT_OBJ): $(COMPONENT_SOURCE) kernel/wasm/component.h kernel/wasm/instance_state.h Makefile
+	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(CC) $(CFLAGS) -c $(COMPONENT_SOURCE) -o $(COMPONENT_OBJ)
+
+$(INSTANCE_STATE_OBJ): $(INSTANCE_STATE_SOURCE) kernel/wasm/component.h kernel/wasm/instance_state.h Makefile
+	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(CC) $(CFLAGS) -c $(INSTANCE_STATE_SOURCE) -o $(INSTANCE_STATE_OBJ)
 
 fuzz-wasm-shim: $(FUZZ_WASM_SHIM_BIN)
 	mkdir -p $(BUILD_DIR)/fuzz-corpus-wasm-shim
