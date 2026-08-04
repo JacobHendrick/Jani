@@ -590,9 +590,14 @@ Gates: `make test` 4,439 checks across twelve binaries, `make kernel` links,
 `write-ordering-negative` detects both a removed and a dropped barrier, three
 fuzz campaigns clean at 10,000 runs.
 
-Still assumed: that the physical device honors a flush. And `make wow-demo` has
-no negative control — it catches the failures it has assertions for, but nothing
-proves it would catch a subtly broken resume the way
-`write-ordering-negative` proves its rig has teeth.
+`make wow-demo-negative` closes the gap that entry originally ended on. Three
+seeded resume bugs, each behind `-DJANI_WOW_BUG=n`: calling `jani_init` on
+resume, skipping the commit, and zeroing linear memory after restore. The gate
+must reject all three, and does. A gate nobody has watched fail is not yet a
+gate — the same reasoning as `model-check-negative`, and the reason
+`CACHE_MODE=unsafe` passing was worth taking seriously in the first place.
+
+Still assumed: that the physical device honors a flush. Only real hardware
+settles it.
 
 <!-- Next entry goes here -->

@@ -8,6 +8,7 @@
 #include "../drivers/serial.h"
 #include "../drivers/virtio_blk.h"
 #include "../lib/printk.h"
+#include "../lib/string.h"
 #include "../mm/heap.h"
 #include "../mm/layout.h"
 #include "../mm/memory_map.h"
@@ -492,6 +493,14 @@ static int run_store_demo(void) {
 #define COMPONENT_TICK_PERIOD 100u
 #define COMPONENT_COLLECT_EVERY 8u
 
+#ifndef JANI_WOW_BUG
+#define JANI_WOW_BUG 0
+#endif
+
+#define JANI_WOW_BUG_INIT_ON_RESUME 1
+#define JANI_WOW_BUG_SKIP_COMMIT 2
+#define JANI_WOW_BUG_LOSE_MEMORY 3
+
 static struct component demo_component;
 static int demo_component_ready;
 
@@ -577,6 +586,21 @@ static int run_component_demo(void) {
 
         printk("component: resumed at logical time %d\n",
                (int)demo_component.logical_time);
+
+#if JANI_WOW_BUG == JANI_WOW_BUG_INIT_ON_RESUME
+        (void)jani_wasm_instance_call(demo_component.instance,
+                                      demo_component.exec_env, "jani_init");
+#elif JANI_WOW_BUG == JANI_WOW_BUG_LOSE_MEMORY
+        {
+            uint8_t *memory;
+            size_t memory_size;
+
+            if (jani_wasm_instance_memory(demo_component.instance, &memory,
+                                          &memory_size)) {
+                memset(memory, 0, memory_size);
+            }
+        }
+#endif
     } else {
         kputs("store: registry absent, formatting\n");
 
@@ -616,11 +640,13 @@ static void component_tick_forever(void) {
             continue;
         }
 
+#if JANI_WOW_BUG != JANI_WOW_BUG_SKIP_COMMIT
         if (!component_commit(&demo_store, &demo_component)) {
             kputs("ERROR: component commit failed\n");
             demo_component_ready = 0;
             continue;
         }
+#endif
 
         if ((demo_component.logical_time % COMPONENT_COLLECT_EVERY) == 0) {
             if (!object_store_collect(&demo_store)) {

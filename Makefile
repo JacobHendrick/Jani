@@ -108,7 +108,10 @@ CFLAGS := -target x86_64-freestanding-none \
 	-O0 \
 	-g \
 	-fsanitize=undefined \
-	-fsanitize-trap=undefined
+	-fsanitize-trap=undefined \
+	$(EXTRA_CFLAGS)
+
+EXTRA_CFLAGS ?=
 
 ZIG_KERNEL_TARGET := -target x86_64-freestanding-none
 
@@ -221,7 +224,7 @@ KERNEL_OBJECTS += $(WASM_SHIM_OBJECTS) $(WAMR_PLATFORM_OBJ) $(WAMR_OBJECTS) \
 .PHONY: all check-tools kernel iso run run-debug test fuzz-heap \
 	fuzz-object-store fuzz-wasm-shim fuzz-wasm-module fuzz-syscall-args \
 	model-check model-check-negative \
-	write-ordering-negative crash-test wow-demo hello-wasm counter-wasm \
+	write-ordering-negative crash-test wow-demo wow-demo-negative hello-wasm counter-wasm \
 	verify-wamr clean
 
 all: iso
@@ -634,6 +637,25 @@ crash-test: $(ISO_IMAGE)
 
 wow-demo: $(ISO_IMAGE)
 	tools/wow_demo_qemu.sh $(WOW_CYCLES) $(WOW_SECONDS)
+
+# Proves the gate above can fail. Each seed breaks resume in a different way;
+# the gate must reject every one of them. A gate nobody has seen fail is not
+# yet a gate -- the same reasoning as model-check-negative.
+wow-demo-negative:
+	@set -e; for bug in 1 2 3; do \
+	  echo "== seeded resume bug $$bug: expecting the gate to fail =="; \
+	  rm -f $(MAIN_OBJ) $(KERNEL_ELF) $(ISO_IMAGE); \
+	  $(MAKE) --no-print-directory EXTRA_CFLAGS=-DJANI_WOW_BUG=$$bug $(ISO_IMAGE) >/dev/null; \
+	  if tools/wow_demo_qemu.sh 2 $(WOW_SECONDS) >/dev/null 2>&1; then \
+	    echo "MISSED: seeded bug $$bug went undetected"; \
+	    rm -f $(MAIN_OBJ) $(KERNEL_ELF) $(ISO_IMAGE); \
+	    exit 1; \
+	  fi; \
+	  echo "   caught"; \
+	done; \
+	rm -f $(MAIN_OBJ) $(KERNEL_ELF) $(ISO_IMAGE); \
+	echo; \
+	echo "PASS: the wow-demo gate rejected all 3 seeded resume bugs"
 
 clean:
 	rm -rf $(BUILD_DIR)
