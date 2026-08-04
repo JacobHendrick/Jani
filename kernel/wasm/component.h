@@ -26,6 +26,46 @@
 #define COMPONENT_RIGHTS_SEND UINT32_C(0x4)
 #define COMPONENT_RIGHTS_GRANT UINT32_C(0x8)
 
+#define COMPONENT_REGISTRY_MAGIC UINT64_C(0x4A414E495F524547)
+#define COMPONENT_REGISTRY_FORMAT_VERSION UINT32_C(1)
+#define COMPONENT_REGISTRY_HEADER_SIZE 32u
+
+#define COMPONENT_ROOT_MAGIC UINT64_C(0x4A414E495F524F54)
+#define COMPONENT_ROOT_FORMAT_VERSION UINT32_C(1)
+#define COMPONENT_ROOT_SIZE 72u
+
+struct component_registry_header {
+    uint64_t magic;
+    uint32_t format_version;
+    uint32_t component_count;
+    uint64_t next_sequence;
+    uint32_t payload_crc32c;
+    uint32_t _reserved;
+};
+
+_Static_assert(
+    sizeof(struct component_registry_header) == COMPONENT_REGISTRY_HEADER_SIZE,
+    "registry header must be exactly 32 bytes"
+);
+
+struct component_root_record {
+    uint64_t magic;
+    uint32_t format_version;
+    uint32_t _reserved;
+
+    struct object_id module_id;
+    struct object_id captable_id;
+    struct object_id state_id;
+
+    uint32_t payload_crc32c;
+    uint32_t _padding;
+};
+
+_Static_assert(
+    sizeof(struct component_root_record) == COMPONENT_ROOT_SIZE,
+    "component root record must be exactly 72 bytes"
+);
+
 struct component_capability {
     struct object_id object;
     uint32_t rights;

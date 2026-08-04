@@ -14,6 +14,8 @@
 #include "../mm/pmm.h"
 #include "../mm/vmm.h"
 #include "../obj/object_store.h"
+#include "../wasm/component.h"
+#include "../wasm/instance_state.h"
 #include "../wasm/module.h"
 #include "../wasm/runtime.h"
 #include "../arch/stack.h"
@@ -222,7 +224,7 @@ static int run_heap_test(void) {
 
 #define DEMO_SECTORS 4096u
 #define DEMO_TABLE_CAPACITY 64u
-#define DEMO_CACHE_BYTES 8192u
+#define DEMO_CACHE_BYTES 98304u
 #define DEMO_ARENA_BYTES 16384u
 #define DEMO_BITMAP_BYTES ((DEMO_SECTORS + 7u) / 8u)
 
@@ -276,6 +278,18 @@ static int demo_payload_matches(
     return 1;
 }
 
+static int demo_owns_object(struct object_id id) {
+    unsigned slot;
+
+    for (slot = 0; slot < DEMO_OBJECTS; slot++) {
+        if (object_id_equal(id, demo_object_id(slot))) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
 static int demo_verify_all(void) {
     struct object_header header;
     const uint8_t *payload;
@@ -300,7 +314,8 @@ static int demo_verify_all(void) {
             printk("ERROR: entry %d carries the wrong id\n", (int)index);
             return 0;
         }
-        if (!demo_payload_matches(payload, payload_size, header.version)) {
+        if (demo_owns_object(id) &&
+            !demo_payload_matches(payload, payload_size, header.version)) {
             printk("ERROR: entry %d payload does not match version %d\n",
                    (int)index, (int)header.version);
             return 0;
@@ -474,10 +489,16 @@ static int run_store_demo(void) {
     return demo_write_workload();
 }
 
-static int run_wasm_demo(void) {
+static struct component demo_component;
+
+static int run_component_demo(void) {
+    struct object_id roots[COMPONENT_MAX];
     const uint8_t *module_bytes;
     size_t module_length;
+    uint64_t sequence;
+    size_t count;
     uint32_t section_count;
+    int tick;
 
     if ((module_request.response == 0)
         || (module_request.response->module_count == 0)) {
@@ -487,16 +508,58 @@ static int run_wasm_demo(void) {
 
     module_bytes = (const uint8_t *)module_request.response->modules[0]->address;
     module_length = (size_t)module_request.response->modules[0]->size;
-    printk("wasm: limine module, %d bytes\n", (int)module_length);
 
     section_count = 0;
-    if (!jani_wasm_module_validate(module_bytes, module_length, &section_count)) {
+    if (!jani_wasm_module_validate(module_bytes, module_length,
+                                   &section_count)) {
         kputs("ERROR: wasm module failed pre-validation\n");
         return 0;
     }
-    printk("wasm: pre-validation ok, %d sections\n", (int)section_count);
 
-    return jani_wasm_run_module(module_bytes, module_length);
+    if (!jani_wasm_runtime_start()) {
+        return 0;
+    }
+
+    if (component_registry_load(&demo_store, roots, COMPONENT_MAX, &count,
+                                &sequence) && (count > 0)) {
+        printk("store: registry found (%d component)\n", (int)count);
+
+        if (!component_resume(&demo_store, roots[0], &demo_component)) {
+            kputs("ERROR: component resume failed\n");
+            return 0;
+        }
+
+        printk("component: resumed at logical time %d\n",
+               (int)demo_component.logical_time);
+    } else {
+        kputs("store: registry absent, formatting\n");
+
+        if (!component_install(&demo_store, module_bytes, module_length,
+                               &demo_component)) {
+            kputs("ERROR: component install failed\n");
+            return 0;
+        }
+
+        kputs("component: initialized\n");
+    }
+
+    for (tick = 0; tick < 8; tick++) {
+        if (!demo_component.timer_armed) {
+            break;
+        }
+
+        if (!component_invoke_timer(&demo_component)) {
+            kputs("ERROR: component timer handler failed\n");
+            return 0;
+        }
+
+        if (!component_commit(&demo_store, &demo_component)) {
+            kputs("ERROR: component commit failed\n");
+            return 0;
+        }
+    }
+
+    return 1;
 }
 
 void kmain(void) {
@@ -555,10 +618,10 @@ void kmain(void) {
             kputs("ERROR: object store demo failed\n");
         }
 
-        if (run_wasm_demo()) {
-            kputs("wasm demo ok\n");
+        if (run_component_demo()) {
+            kputs("component demo ok\n");
         } else {
-            kputs("ERROR: wasm demo failed\n");
+            kputs("ERROR: component demo failed\n");
         }
     } else {
         kputs("ERROR: VMM self-test failed\n");

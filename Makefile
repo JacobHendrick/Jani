@@ -415,12 +415,12 @@ kernel: $(KERNEL_ELF)
 
 iso: $(ISO_IMAGE)
 
-$(ISO_IMAGE): $(KERNEL_ELF) $(LIMINE_CONFIG) $(HELLO_WASM)
+$(ISO_IMAGE): $(KERNEL_ELF) $(LIMINE_CONFIG) $(COUNTER_WASM)
 	mkdir -p $(ISO_ROOT)/boot
 	mkdir -p $(ISO_ROOT)/boot/limine
 	mkdir -p $(ISO_ROOT)/EFI/BOOT
 	cp $(KERNEL_ELF) $(ISO_ROOT)/boot/jani.elf
-	cp $(HELLO_WASM) $(ISO_ROOT)/boot/hello.wasm
+	cp $(COUNTER_WASM) $(ISO_ROOT)/boot/counter.wasm
 	cp $(LIMINE_CONFIG) $(ISO_ROOT)/boot/limine.conf
 	cp $(LIMINE_DIR)/limine-bios.sys $(ISO_ROOT)/boot/limine/
 	cp $(LIMINE_DIR)/limine-bios-cd.bin $(ISO_ROOT)/boot/limine/
@@ -558,8 +558,9 @@ $(HELLO_WASM): $(HELLO_SOURCE) Makefile
 $(COUNTER_WASM): $(COUNTER_SOURCE) Makefile
 	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
 	$(ZIG_ENV) $(ZIG) build-exe -target wasm32-freestanding -O ReleaseSmall \
-	  -fno-entry -rdynamic --export=jani_init --export=jani_on_timer \
-	  --export=jani_on_message $(COUNTER_SOURCE) -femit-bin=$(COUNTER_WASM)
+	  -fno-entry -rdynamic --stack 16384 --export=jani_init \
+	  --export=jani_on_timer --export=jani_on_message $(COUNTER_SOURCE) \
+	  -femit-bin=$(COUNTER_WASM)
 
 counter-wasm: $(COUNTER_WASM)
 
