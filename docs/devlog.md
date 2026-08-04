@@ -413,4 +413,95 @@ Gates: `make test` 3,258 checks, `make kernel` links, `make crash-test` 25/25
 with `RECOVERY OK`, both wasm fuzz campaigns clean, `verify-wamr` 75/75 byte
 for byte. All three commits verified green individually, not just the tip.
 
+## 2026-08-03 — Flush becomes testable, and the wow demo gets a spec
+
+Slice 2 was designed and Jacob's half of it built. Jacob's half — the on-disk
+layouts, the syscall ABI as implemented, the resume path, the tick loop — is
+next and is untouched here.
+
+**The gap that mattered most is now half closed.** "Is flush a real durability
+barrier" was unverified, and unverifiable by any gate the project owned:
+`make crash-test` passes with `CACHE_MODE=unsafe`, where QEMU discards every
+flush, so it cannot distinguish a barrier from a no-op. The question splits in
+two, and only one half needs hardware. Does the device honor the barrier is
+hardware and stays assumed. Does our code issue the barrier in the right places
+is software, and is now tested hosted.
+
+`tools/hosted/test_write_ordering.c` models a disk with two images — what a
+reader sees, and what survives power loss — where `flush` is the only operation
+that promotes bytes between them. That makes flush load-bearing by
+construction. Power-cut points are swept through a transaction and recovery
+must yield the old version or the new one, never a torn one.
+
+**Getting the negative control to fire took three attempts, and each failure
+was informative rather than a bug in the test.**
+
+- Discarding every flush trivially fails: nothing is ever durable, not even the
+  format, so mount dies immediately. That is a faithful model of
+  `CACHE_MODE=unsafe` and worth keeping, but it only proves the rig catches a
+  totally broken barrier.
+- Dropping exactly one flush found nothing. A dropped barrier only *delays*
+  durability, and the next flush repairs it atomically together with whatever
+  that flush covers — so the commit record can never become durable ahead of
+  its data. Delay is safe; the hazard is reordering.
+- Making the power cut adversarial — promote the unflushed writes *except* one,
+  rather than discarding all of them — still found nothing, because the model
+  only cut power *at* a write. The window between a write succeeding and its
+  barrier completing was never sampled.
+
+The fix was one line of semantics: let the Nth write succeed, then cut. With
+that, dropping a single barrier corrupts **2 of 3,840** (flush, cut, drop)
+triples. The narrowness is the finding. That bug class survives ordinary crash
+testing indefinitely.
+
+The store passed every version, including 240 cut × drop combinations under the
+adversarial model. That is evidence about the *implementation* of the commit
+protocol, which is exactly what `WalCommit.tla` cannot supply — the same gap
+that hid the committed-transaction-loss bug on 2026-07-22.
+
+Positive sweep runs in `make test` at 0.7 s. The negative controls live in
+`make write-ordering-negative`, mirroring how `model-check-negative` sits
+beside `model-check`, because a proof-of-teeth is not a per-commit gate.
+
+**The object graph changed shape during design, for a correctness reason.** A
+tick advances two things together: linear memory (`N` → `N+1`) and scheduling
+state (clock `T` → `T+1`). As separate objects that is two transactions with a
+power-cut window between them, and neither ordering survives it. Memory first
+and the tick re-fires on resume — the counter advances by two. Clock first and
+the tick is lost — the counter skips one. Exactness needs atomicity.
+
+The two ways to get it are a multi-object transaction in the store, or one
+object. Merging costs nothing, because memory and mailbox are *both* dirty on
+every tick already, so one object writes exactly as many bytes as two. The
+split is by write frequency throughout: module and capability table are
+write-once and stay separate; memory, mailbox, clock and deadline are per-tick
+and became one instance-state object.
+
+**The counter component would have silently reset to zero.** If its variable
+landed in a WASM global rather than in linear memory, snapshotting linear
+memory would not capture it, and the demo would look correct in source while
+resetting every boot. Zig normally places module-level `var` in the data
+segment, but `-O ReleaseSmall` may promote a variable that is never
+address-taken. Access goes through a `volatile` pointer to pin it. Verified by
+parsing the emitted module: the only WASM global is a mutable `i32` (the stack
+pointer), and the counter is read and written with `i64.load`/`i64.store`. A
+`u64` cannot hide in an `i32` global.
+
+`kernel/wasm/syscall_args.zig` is the second trust-boundary validator, syscall
+arguments being the other untrusted input of Phase 3. Its fuzzer checks against
+an independent 64-bit oracle rather than for absence of crashes, so a validator
+that is merely self-consistent fails. `SYSCALL_ARGS_OBJ` went into
+`KERNEL_OBJECTS` at the same time as its build rule — slice 1 lost time to
+exactly that wiring gap, where `MODULE_VALIDATE_OBJ` existed but was never
+linked.
+
+Gates: `make test` 3,550 checks, `make kernel` links with all five validator
+symbols present in the ELF, `make crash-test` 25/25 with `RECOVERY OK`,
+`make write-ordering-negative` detects both a removed and a dropped barrier,
+`fuzz-syscall-args` / `fuzz-wasm-module` / `fuzz-wasm-shim` clean at 10,000
+runs each.
+
+Still assumed, and now the sharpest single unknown in the project: that the
+physical device honors a flush. Only real hardware settles it.
+
 <!-- Next entry goes here -->
