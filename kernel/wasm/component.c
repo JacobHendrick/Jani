@@ -72,6 +72,30 @@ static struct object_id component_sequence_id(uint64_t sequence) {
     return component_make_id(COMPONENT_SEQUENCE_ID_HIGH, sequence);
 }
 
+static uint8_t *component_scratch;
+static size_t component_scratch_size;
+
+static uint8_t *component_scratch_reserve(size_t needed) {
+    uint8_t *grown;
+
+    if ((component_scratch != NULL) && (component_scratch_size >= needed)) {
+        return component_scratch;
+    }
+
+    grown = kmalloc(needed);
+    if (grown == NULL) {
+        return NULL;
+    }
+
+    if (component_scratch != NULL) {
+        kfree(component_scratch);
+    }
+
+    component_scratch = grown;
+    component_scratch_size = needed;
+    return component_scratch;
+}
+
 int component_registry_load(
     struct object_store *store,
     struct object_id *roots_out,
@@ -277,7 +301,7 @@ int component_commit(
     }
 
     needed = instance_state_size(memory_size, component->mailbox_used);
-    scratch = kmalloc(needed);
+    scratch = component_scratch_reserve(needed);
     if (scratch == NULL) {
         return 0;
     }
@@ -293,7 +317,6 @@ int component_commit(
         );
     }
 
-    kfree(scratch);
     return result;
 }
 

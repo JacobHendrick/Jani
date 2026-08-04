@@ -489,7 +489,10 @@ static int run_store_demo(void) {
     return demo_write_workload();
 }
 
+#define COMPONENT_TICK_PERIOD 100u
+
 static struct component demo_component;
+static int demo_component_ready;
 
 static int run_component_demo(void) {
     struct object_id roots[COMPONENT_MAX];
@@ -498,7 +501,6 @@ static int run_component_demo(void) {
     uint64_t sequence;
     size_t count;
     uint32_t section_count;
-    int tick;
 
     if ((module_request.response == 0)
         || (module_request.response->module_count == 0)) {
@@ -543,23 +545,38 @@ static int run_component_demo(void) {
         kputs("component: initialized\n");
     }
 
-    for (tick = 0; tick < 8; tick++) {
-        if (!demo_component.timer_armed) {
-            break;
+    demo_component_ready = 1;
+    return 1;
+}
+
+static void component_tick_forever(void) {
+    uint64_t next_deadline;
+
+    next_deadline = pit_get_ticks() + COMPONENT_TICK_PERIOD;
+
+    for (;;) {
+        __asm__ volatile ("sti; hlt");
+
+        if (!demo_component_ready || !demo_component.timer_armed) {
+            continue;
         }
+
+        if (pit_get_ticks() < next_deadline) {
+            continue;
+        }
+        next_deadline += COMPONENT_TICK_PERIOD;
 
         if (!component_invoke_timer(&demo_component)) {
             kputs("ERROR: component timer handler failed\n");
-            return 0;
+            demo_component_ready = 0;
+            continue;
         }
 
         if (!component_commit(&demo_store, &demo_component)) {
             kputs("ERROR: component commit failed\n");
-            return 0;
+            demo_component_ready = 0;
         }
     }
-
-    return 1;
 }
 
 void kmain(void) {
@@ -663,5 +680,10 @@ void kmain(void) {
     run_fault_test();
 
     kputs("interrupts enabled\n");
+
+    if (demo_component_ready) {
+        component_tick_forever();
+    }
+
     halt_forever();
 }
