@@ -87,6 +87,8 @@ PRINTK_SOURCE := kernel/lib/printk.c
 STRING_SOURCE := kernel/lib/string.c
 HELLO_WASM := $(BUILD_DIR)/hello.wasm
 HELLO_SOURCE := components/hello/hello.zig
+COUNTER_WASM := $(BUILD_DIR)/counter.wasm
+COUNTER_SOURCE := components/counter/counter.zig
 
 LINKER_SCRIPT := kernel/boot/linker.ld
 LIMINE_CONFIG := kernel/boot/limine.conf
@@ -117,6 +119,7 @@ TEST_OBJECT_TABLE_BIN := $(BUILD_DIR)/test_object_table
 TEST_OBJECT_HEADER_BIN := $(BUILD_DIR)/test_object_header
 TEST_WAL_BIN := $(BUILD_DIR)/test_wal
 TEST_OBJECT_STORE_BIN := $(BUILD_DIR)/test_object_store
+TEST_WRITE_ORDERING_BIN := $(BUILD_DIR)/test_write_ordering
 TEST_WASM_SHIM_BIN := $(BUILD_DIR)/test_wasm_shim
 TEST_WASM_MODULE_BIN := $(BUILD_DIR)/test_wasm_module
 MODULE_VALIDATE_HOSTED_OBJ := $(BUILD_DIR)/module_validate_hosted.o
@@ -126,6 +129,11 @@ FUZZ_HEAP_BIN := $(BUILD_DIR)/fuzz_heap
 FUZZ_OBJECT_STORE_BIN := $(BUILD_DIR)/fuzz_object_store
 FUZZ_WASM_SHIM_BIN := $(BUILD_DIR)/fuzz_wasm_shim
 FUZZ_WASM_MODULE_BIN := $(BUILD_DIR)/fuzz_wasm_module
+TEST_SYSCALL_ARGS_BIN := $(BUILD_DIR)/test_syscall_args
+FUZZ_SYSCALL_ARGS_BIN := $(BUILD_DIR)/fuzz_syscall_args
+SYSCALL_ARGS_SOURCE := kernel/wasm/syscall_args.zig
+SYSCALL_ARGS_OBJ := $(BUILD_DIR)/syscall_args.o
+SYSCALL_ARGS_HOSTED_OBJ := $(BUILD_DIR)/syscall_args_hosted.o
 MODULE_VALIDATE_SOURCE := kernel/wasm/module_validate.zig
 MODULE_VALIDATE_OBJ := $(BUILD_DIR)/module_validate.o
 WASM_SHIM_SOURCES := kernel/wasm/shim/string.c kernel/wasm/shim/stdio.c \
@@ -197,11 +205,12 @@ WASM_RUNTIME_SOURCE := kernel/wasm/runtime.c
 # and is evaluated before this block exists, so an inline reference there
 # expands to nothing and links a WAMR-less kernel without complaining.
 KERNEL_OBJECTS += $(WASM_SHIM_OBJECTS) $(WAMR_PLATFORM_OBJ) $(WAMR_OBJECTS) \
-	$(MODULE_VALIDATE_OBJ) $(WASM_RUNTIME_OBJ)
+	$(MODULE_VALIDATE_OBJ) $(SYSCALL_ARGS_OBJ) $(WASM_RUNTIME_OBJ)
 
 .PHONY: all check-tools kernel iso run run-debug test fuzz-heap \
-	fuzz-object-store fuzz-wasm-shim fuzz-wasm-module model-check model-check-negative \
-	crash-test hello-wasm verify-wamr clean
+	fuzz-object-store fuzz-wasm-shim fuzz-wasm-module fuzz-syscall-args \
+	model-check model-check-negative \
+	write-ordering-negative crash-test hello-wasm counter-wasm verify-wamr clean
 
 all: iso
 
@@ -425,15 +434,17 @@ $(ISO_IMAGE): $(KERNEL_ELF) $(LIMINE_CONFIG) $(HELLO_WASM)
 		-o $(ISO_IMAGE)
 	$(LIMINE_DIR)/limine bios-install $(ISO_IMAGE)
 
-test: $(TEST_PMM_BIN) $(TEST_HEAP_BIN) $(TEST_OBJECT_TABLE_BIN) $(TEST_OBJECT_HEADER_BIN) $(TEST_WAL_BIN) $(TEST_OBJECT_STORE_BIN) $(TEST_WASM_SHIM_BIN) $(TEST_WASM_MODULE_BIN)
+test: $(TEST_PMM_BIN) $(TEST_HEAP_BIN) $(TEST_OBJECT_TABLE_BIN) $(TEST_OBJECT_HEADER_BIN) $(TEST_WAL_BIN) $(TEST_OBJECT_STORE_BIN) $(TEST_WRITE_ORDERING_BIN) $(TEST_WASM_SHIM_BIN) $(TEST_WASM_MODULE_BIN) $(TEST_SYSCALL_ARGS_BIN)
 	$(TEST_PMM_BIN)
 	$(TEST_HEAP_BIN)
 	$(TEST_OBJECT_TABLE_BIN)
 	$(TEST_OBJECT_HEADER_BIN)
 	$(TEST_WAL_BIN)
 	$(TEST_OBJECT_STORE_BIN)
+	$(TEST_WRITE_ORDERING_BIN)
 	$(TEST_WASM_SHIM_BIN)
 	$(TEST_WASM_MODULE_BIN)
+	$(TEST_SYSCALL_ARGS_BIN)
 
 $(TEST_PMM_BIN): $(PMM_SOURCE) $(HOSTED_DIR)/test_pmm.c $(HOSTED_DIR)/stubs.c $(HOSTED_DIR)/fake_memory_map.c $(HOSTED_DIR)/fake_memory_map.h $(HOSTED_DIR)/check.h Makefile
 	mkdir -p $(BUILD_DIR)
@@ -467,6 +478,13 @@ $(TEST_OBJECT_STORE_BIN): $(OBJECT_ID_SOURCE) $(OBJECT_TABLE_SOURCE) $(OBJECT_ST
 	mkdir -p $(BUILD_DIR)
 	$(HOST_CC) $(HOST_CFLAGS) $(OBJECT_ID_SOURCE) $(OBJECT_TABLE_SOURCE) $(OBJECT_STORE_SOURCE) $(HOSTED_DIR)/test_object_store.c $(OBJECT_HEADER_VALIDATE_HOSTED_OBJ) $(WAL_VALIDATE_HOSTED_OBJ) -o $(TEST_OBJECT_STORE_BIN)
 
+write-ordering-negative: $(TEST_WRITE_ORDERING_BIN)
+	$(TEST_WRITE_ORDERING_BIN) negative
+
+$(TEST_WRITE_ORDERING_BIN): $(OBJECT_ID_SOURCE) $(OBJECT_TABLE_SOURCE) $(OBJECT_STORE_SOURCE) $(OBJECT_HEADER_VALIDATE_HOSTED_OBJ) $(WAL_VALIDATE_HOSTED_OBJ) $(HOSTED_DIR)/test_write_ordering.c $(HOSTED_DIR)/check.h Makefile
+	mkdir -p $(BUILD_DIR)
+	$(HOST_CC) $(HOST_CFLAGS) $(OBJECT_ID_SOURCE) $(OBJECT_TABLE_SOURCE) $(OBJECT_STORE_SOURCE) $(HOSTED_DIR)/test_write_ordering.c $(OBJECT_HEADER_VALIDATE_HOSTED_OBJ) $(WAL_VALIDATE_HOSTED_OBJ) -o $(TEST_WRITE_ORDERING_BIN)
+
 $(FUZZ_HEAP_BIN): $(HEAP_SOURCE) $(FREE_LIST_SOURCE) $(HOSTED_DIR)/heap_backend_hosted.c $(HOSTED_DIR)/hosted_heap.h $(HOSTED_DIR)/fuzz_heap.c Makefile
 	mkdir -p $(BUILD_DIR)
 	$(HOST_CC) $(FUZZ_CFLAGS) $(HEAP_SOURCE) $(FREE_LIST_SOURCE) $(HOSTED_DIR)/heap_backend_hosted.c $(HOSTED_DIR)/fuzz_heap.c -o $(FUZZ_HEAP_BIN)
@@ -478,6 +496,18 @@ $(TEST_WASM_SHIM_BIN): $(WASM_SHIM_SOURCES) $(HOSTED_DIR)/test_wasm_shim.c $(HOS
 $(FUZZ_WASM_SHIM_BIN): $(WASM_SHIM_SOURCES) $(HOSTED_DIR)/fuzz_wasm_shim.c kernel/wasm/shim/jani_libc.h Makefile
 	mkdir -p $(BUILD_DIR)
 	$(HOST_CC) $(FUZZ_CFLAGS) -DJANI_HOSTED $(WASM_SHIM_SOURCES) $(HOSTED_DIR)/fuzz_wasm_shim.c -o $(FUZZ_WASM_SHIM_BIN)
+
+$(SYSCALL_ARGS_HOSTED_OBJ): $(SYSCALL_ARGS_SOURCE) Makefile
+	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(ZIG) build-obj -O Debug $(SYSCALL_ARGS_SOURCE) -femit-bin=$(SYSCALL_ARGS_HOSTED_OBJ)
+
+$(TEST_SYSCALL_ARGS_BIN): $(SYSCALL_ARGS_HOSTED_OBJ) $(HOSTED_DIR)/test_syscall_args.c $(HOSTED_DIR)/check.h kernel/wasm/syscall_args.h Makefile
+	mkdir -p $(BUILD_DIR)
+	$(HOST_CC) $(HOST_CFLAGS) $(HOSTED_DIR)/test_syscall_args.c $(SYSCALL_ARGS_HOSTED_OBJ) -o $(TEST_SYSCALL_ARGS_BIN)
+
+$(FUZZ_SYSCALL_ARGS_BIN): $(SYSCALL_ARGS_HOSTED_OBJ) $(HOSTED_DIR)/fuzz_syscall_args.c kernel/wasm/syscall_args.h Makefile
+	mkdir -p $(BUILD_DIR)
+	$(HOST_CC) $(FUZZ_CFLAGS) $(HOSTED_DIR)/fuzz_syscall_args.c $(SYSCALL_ARGS_HOSTED_OBJ) -o $(FUZZ_SYSCALL_ARGS_BIN)
 
 $(MODULE_VALIDATE_HOSTED_OBJ): $(MODULE_VALIDATE_SOURCE) Makefile
 	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
@@ -503,6 +533,10 @@ $(FUZZ_WASM_MODULE_BIN): $(MODULE_VALIDATE_HOSTED_OBJ) $(HOSTED_DIR)/fuzz_wasm_m
 # an out-of-bounds index or integer overflow inside the validator panics and
 # aborts the run. The same limitation applies to fuzz-object-store, which
 # links the header and WAL validators the same way.
+fuzz-syscall-args: $(FUZZ_SYSCALL_ARGS_BIN)
+	mkdir -p $(BUILD_DIR)/fuzz-corpus-syscall-args
+	$(FUZZ_SYSCALL_ARGS_BIN) $(BUILD_DIR)/fuzz-corpus-syscall-args -runs=$(FUZZ_RUNS) -max_len=64 -timeout=5
+
 fuzz-wasm-module: $(FUZZ_WASM_MODULE_BIN)
 	mkdir -p $(BUILD_DIR)/fuzz-corpus-wasm-module
 	printf '\000asm\001\000\000\000\001\002\252\273\003\000' \
@@ -516,11 +550,23 @@ $(HELLO_WASM): $(HELLO_SOURCE) Makefile
 	$(ZIG_ENV) $(ZIG) build-exe -target wasm32-freestanding -O ReleaseSmall \
 	  -fno-entry -rdynamic --export=run $(HELLO_SOURCE) -femit-bin=$(HELLO_WASM)
 
+$(COUNTER_WASM): $(COUNTER_SOURCE) Makefile
+	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(ZIG) build-exe -target wasm32-freestanding -O ReleaseSmall \
+	  -fno-entry -rdynamic --export=jani_init --export=jani_on_timer \
+	  --export=jani_on_message $(COUNTER_SOURCE) -femit-bin=$(COUNTER_WASM)
+
+counter-wasm: $(COUNTER_WASM)
+
 hello-wasm: $(HELLO_WASM)
 
 $(MODULE_VALIDATE_OBJ): $(MODULE_VALIDATE_SOURCE) Makefile
 	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
 	$(ZIG_ENV) $(ZIG) build-obj $(ZIG_KERNEL_TARGET) -O Debug $(MODULE_VALIDATE_SOURCE) -femit-bin=$(MODULE_VALIDATE_OBJ)
+
+$(SYSCALL_ARGS_OBJ): $(SYSCALL_ARGS_SOURCE) Makefile
+	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(ZIG) build-obj $(ZIG_KERNEL_TARGET) -O Debug $(SYSCALL_ARGS_SOURCE) -femit-bin=$(SYSCALL_ARGS_OBJ)
 
 $(WASM_RUNTIME_OBJ): $(WASM_RUNTIME_SOURCE) Makefile
 	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
