@@ -199,7 +199,7 @@ static void test_parses_every_type(void) {
     const char source[] =
         "syscall a(t: type-id, s: u32) -> i32;"
         "syscall b(c: cap, o: u32, buf: slice<u8>) -> i64;"
-        "syscall c(x: cap?, p: ptr<i32>, d: u64) -> i32;"
+        "syscall c(x: cap?, p: out i32, d: u64) -> i32;"
         "syscall d(code: i32);";
     struct idl_unit unit;
 
@@ -211,7 +211,7 @@ static void test_parses_every_type(void) {
     CHECK(unit.syscalls[1].params[2].type == IDL_TYPE_SLICE_U8);
     CHECK(unit.syscalls[1].result == IDL_TYPE_I64);
     CHECK(unit.syscalls[2].params[0].type == IDL_TYPE_CAP_OPT);
-    CHECK(unit.syscalls[2].params[1].type == IDL_TYPE_PTR_I32);
+    CHECK(unit.syscalls[2].params[1].type == IDL_TYPE_OUT_I32);
     CHECK(unit.syscalls[2].params[2].type == IDL_TYPE_U64);
     CHECK(unit.syscalls[3].result == IDL_TYPE_VOID);
     CHECK(unit.syscalls[3].param_count == 1u);
@@ -337,7 +337,7 @@ static void test_lowering_reproduces_the_existing_table(void) {
         "syscall message_send(t: cap, p: slice<u8>, c: cap?) -> i32;",
         "(iiii)i");
     check_signature(
-        "syscall message_recv(b: slice<u8>, c: ptr<i32>) -> i32;",
+        "syscall message_recv(b: slice<u8>, c: out i32) -> i32;",
         "(iii)i");
     check_signature("syscall timer_set(d: u64) -> i32;", "(I)i");
     check_signature("syscall time_logical() -> i64;", "()I");
@@ -429,7 +429,7 @@ static void test_zig_emitter_handles_mutable_slices_and_optionals(void) {
     char buffer[4096];
 
     emit_source(
-        "syscall message_recv(buffer: slice<u8>, capability_out: ptr<i32>)"
+        "syscall message_recv(buffer: slice<u8>, capability_out: out i32)"
         " -> i32;"
         "syscall message_send(target: cap, payload: slice<u8>,"
         " capability: cap?) -> i32;",
@@ -479,7 +479,7 @@ static void test_out_slices_are_mutable_and_plain_slices_are_const(void) {
 
 static void test_out_is_rejected_on_non_slice_types(void) {
     struct idl_unit unit;
-    const char bad[] = "syscall a(x: out u32) -> i32;";
+    const char bad[] = "syscall a(x: out u64) -> i32;";
 
     CHECK(idl_parse(&unit, bad, sizeof(bad) - 1u) == 0);
     CHECK(unit.error[0] != '\0');

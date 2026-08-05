@@ -22,7 +22,7 @@ static const char *zig_scalar(enum idl_type type) {
         return "i64";
     case IDL_TYPE_U64:
         return "u64";
-    case IDL_TYPE_PTR_I32:
+    case IDL_TYPE_OUT_I32:
         return "?*i32";
     default:
         return "i32";

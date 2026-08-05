@@ -15,7 +15,7 @@ static const char *c_result(enum idl_type type) {
 static const char *c_scalar(enum idl_type type) {
     switch (type) {
     case IDL_TYPE_U32:
-    case IDL_TYPE_PTR_I32:
+    case IDL_TYPE_OUT_I32:
         return "uint32_t";
     case IDL_TYPE_I64:
         return "int64_t";

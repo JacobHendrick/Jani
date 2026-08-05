@@ -47,8 +47,8 @@ const char *idl_type_name(enum idl_type type) {
         return "cap";
     case IDL_TYPE_CAP_OPT:
         return "cap?";
-    case IDL_TYPE_PTR_I32:
-        return "ptr<i32>";
+    case IDL_TYPE_OUT_I32:
+        return "out i32";
     case IDL_TYPE_TYPE_ID:
         return "type-id";
     case IDL_TYPE_OBJECT_REF:

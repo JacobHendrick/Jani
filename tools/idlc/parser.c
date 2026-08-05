@@ -129,8 +129,12 @@ static int parse_type(struct idl_parser *parser, enum idl_type *out) {
         if (!expect(parser, IDL_TOK_IDENT, "expected a type after out")) {
             return 0;
         }
+        if (token_matches(&token, "i32")) {
+            *out = IDL_TYPE_OUT_I32;
+            return 1;
+        }
         if (!token_matches(&token, "slice")) {
-            fail(parser, "out applies only to slice in IDL v1");
+            fail(parser, "out applies only to i32 and slice in IDL v1");
             return 0;
         }
     }
@@ -190,27 +194,6 @@ static int parse_type(struct idl_parser *parser, enum idl_type *out) {
     if (mutable_slice) {
         fail(parser, "out applies only to slice in IDL v1");
         return 0;
-    }
-
-    if (token_matches(&token, "ptr")) {
-        struct idl_token inner;
-
-        if (!expect(parser, IDL_TOK_LANGLE, "expected < after ptr")) {
-            return 0;
-        }
-        inner = parser->current;
-        if (!expect(parser, IDL_TOK_IDENT, "expected a pointee type")) {
-            return 0;
-        }
-        if (!token_matches(&inner, "i32")) {
-            fail(parser, "ptr supports only i32 in IDL v1");
-            return 0;
-        }
-        if (!expect(parser, IDL_TOK_RANGLE, "expected > after ptr pointee")) {
-            return 0;
-        }
-        *out = IDL_TYPE_PTR_I32;
-        return 1;
     }
 
     parser->current = token;
