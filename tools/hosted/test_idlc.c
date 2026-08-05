@@ -4,6 +4,7 @@
 
 #include "../idlc/lexer.h"
 #include "../idlc/parser.h"
+#include "../idlc/emit.h"
 #include "check.h"
 
 unsigned long checks_passed;
@@ -310,6 +311,76 @@ static void test_rejects_overlong_names(void) {
     CHECK(unit.error[0] != '\0');
 }
 
+static void check_signature(const char *declaration, const char *expected) {
+    struct idl_unit unit;
+    char signature[32];
+
+    CHECK(idl_parse(&unit, declaration, strlen(declaration)) == 1);
+    CHECK(idl_wamr_signature(&unit.syscalls[0], signature,
+                             sizeof(signature)) == 1);
+    CHECK(strcmp(signature, expected) == 0);
+}
+
+static void test_lowering_reproduces_the_existing_table(void) {
+    check_signature("syscall log(m: slice<u8>) -> i32;", "(ii)i");
+    check_signature("syscall object_create(t: type-id, s: u32) -> i32;",
+                    "(IIi)i");
+    check_signature(
+        "syscall object_read(c: cap, o: u32, b: slice<u8>) -> i32;",
+        "(iiii)i");
+    check_signature(
+        "syscall object_write(c: cap, o: u32, b: slice<u8>) -> i32;",
+        "(iiii)i");
+    check_signature("syscall object_size(c: cap) -> i64;", "(i)I");
+    check_signature("syscall cap_drop(c: cap) -> i32;", "(i)i");
+    check_signature(
+        "syscall message_send(t: cap, p: slice<u8>, c: cap?) -> i32;",
+        "(iiii)i");
+    check_signature(
+        "syscall message_recv(b: slice<u8>, c: ptr<i32>) -> i32;",
+        "(iii)i");
+    check_signature("syscall timer_set(d: u64) -> i32;", "(I)i");
+    check_signature("syscall time_logical() -> i64;", "()I");
+    check_signature("syscall self() -> i32;", "()i");
+    check_signature("syscall exit(code: i32);", "(i)");
+}
+
+static void test_signature_reports_overflow(void) {
+    struct idl_unit unit;
+    const char source[] = "syscall a(b: slice<u8>, c: slice<u8>) -> i32;";
+    char tiny[4];
+
+    CHECK(idl_parse(&unit, source, sizeof(source) - 1u) == 1);
+    CHECK(idl_wamr_signature(&unit.syscalls[0], tiny, sizeof(tiny)) == 0);
+}
+
+static void test_writer_flags_overflow_instead_of_truncating(void) {
+    char buffer[8];
+    struct idl_writer writer = { buffer, sizeof(buffer), 0, 0 };
+
+    idl_write(&writer, "%s", "short");
+    CHECK(writer.overflowed == 0);
+    idl_write(&writer, "%s", "much too long to fit");
+    CHECK(writer.overflowed == 1);
+    CHECK(writer.length < sizeof(buffer));
+}
+
+static void test_table_emitter_names_the_impl(void) {
+    const char source[] = "syscall self() -> i32;";
+    struct idl_unit unit;
+    char buffer[4096];
+    struct idl_writer writer = { buffer, sizeof(buffer), 0, 0 };
+
+    CHECK(idl_parse(&unit, source, sizeof(source) - 1u) == 1);
+    CHECK(idl_emit_table(&unit, &writer) == 1);
+    CHECK(writer.overflowed == 0);
+    CHECK(strstr(buffer, "\"jani_self\"") != NULL);
+    CHECK(strstr(buffer, "jani_self_impl") != NULL);
+    CHECK(strstr(buffer, "\"()i\"") != NULL);
+    CHECK(strstr(buffer, "do not edit") != NULL);
+    CHECK(strstr(buffer, "NativeSymbol jani_symbols[]") != NULL);
+}
+
 int main(void) {
     checks_passed = 0;
 
@@ -331,6 +402,11 @@ int main(void) {
     test_rejects_unknown_types_and_bad_syntax();
     test_reports_the_line_of_the_error();
     test_rejects_overlong_names();
+
+    test_lowering_reproduces_the_existing_table();
+    test_signature_reports_overflow();
+    test_writer_flags_overflow_instead_of_truncating();
+    test_table_emitter_names_the_impl();
 
     printf("test_idlc: %lu checks passed\n", checks_passed);
     return 0;
