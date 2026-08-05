@@ -1,0 +1,42 @@
+record component_registry_header size 32 {
+    magic:                u64 @ 0;
+    format_version:       u32 @ 8;
+    component_count:      u32 @ 12;
+    next_sequence:        u64 @ 16;
+    payload_crc32c:       u32 @ 24;
+    _reserved:            u32 @ 28;
+}
+
+record component_root_record size 72 {
+    magic:                u64 @ 0;
+    format_version:       u32 @ 8;
+    _reserved:            u32 @ 12;
+    module_id:            object-ref @ 16;
+    captable_id:          object-ref @ 32;
+    state_id:             object-ref @ 48;
+    payload_crc32c:       u32 @ 64;
+    _padding:             u32 @ 68;
+}
+
+record component_captable_header size 32 {
+    magic:                u64 @ 0;
+    format_version:       u32 @ 8;
+    slot_count:           u32 @ 12;
+    next_object_sequence: u64 @ 16;
+    payload_crc32c:       u32 @ 24;
+    _reserved:            u32 @ 28;
+}
+
+record instance_state_header size 64 {
+    magic:                u64 @ 0;
+    format_version:       u32 @ 8;
+    header_size:          u32 @ 12;
+    logical_time:         u64 @ 16;
+    timer_deadline:       u64 @ 24;
+    timer_armed:          u32 @ 32;
+    mailbox_used:         u32 @ 36;
+    memory_size:          u64 @ 40;
+    payload_crc32c:       u32 @ 48;
+    _reserved:            u32 @ 52;
+    _padding:             u64 @ 56;
+}
