@@ -6,6 +6,8 @@
 #include "instance_state.h"
 #include "runtime.h"
 
+#include "generated/records_conform.h"
+
 struct object_id component_make_id(uint64_t high, uint64_t low) {
     struct object_id id;
 

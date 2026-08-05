@@ -515,6 +515,28 @@ static void test_c_emitter_lowers_slices_and_type_ids(void) {
     CHECK(strstr(buffer, "int64_t jani_object_size(int32_t slot);") != NULL);
 }
 
+static void test_conform_emitter_asserts_offsets_and_size(void) {
+    char buffer[4096];
+
+    emit_source(
+        "record component_root_record size 72 {\n"
+        "    magic: u64 @ 0;\n"
+        "    state_id: object-ref @ 48;\n"
+        "}",
+        idl_emit_conform, buffer, sizeof(buffer));
+
+    CHECK(strstr(buffer,
+        "offsetof(struct component_root_record, magic) == 0") != NULL);
+    CHECK(strstr(buffer,
+        "offsetof(struct component_root_record, state_id) == 48") != NULL);
+    CHECK(strstr(buffer,
+        "sizeof(struct component_root_record) == 72") != NULL);
+    CHECK(strstr(buffer, "_Static_assert") != NULL);
+    CHECK(strstr(buffer, "update idl/records.idl") != NULL);
+    CHECK(strstr(buffer, "#include <stddef.h>") != NULL);
+    CHECK(strstr(buffer, "do not edit") != NULL);
+}
+
 int main(void) {
     checks_passed = 0;
 
@@ -550,6 +572,7 @@ int main(void) {
     test_out_is_rejected_on_non_slice_types();
     test_c_emitter_declares_every_syscall();
     test_c_emitter_lowers_slices_and_type_ids();
+    test_conform_emitter_asserts_offsets_and_size();
 
     printf("test_idlc: %lu checks passed\n", checks_passed);
     return 0;

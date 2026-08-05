@@ -138,8 +138,12 @@ TEST_SYSCALL_ARGS_BIN := $(BUILD_DIR)/test_syscall_args
 TEST_COMPONENT_STATE_BIN := $(BUILD_DIR)/test_component_state
 TEST_COMPONENT_MAILBOX_BIN := $(BUILD_DIR)/test_component_mailbox
 TEST_IDLC_BIN := $(BUILD_DIR)/test_idlc
+IDLC_BIN := $(BUILD_DIR)/idlc
 IDLC_DIR := tools/idlc
-IDLC_SOURCES := $(IDLC_DIR)/lexer.c $(IDLC_DIR)/parser.c $(IDLC_DIR)/emit_table.c $(IDLC_DIR)/emit_zig.c $(IDLC_DIR)/emit_c.c
+IDL_SYSCALLS := idl/syscalls.idl
+IDL_RECORDS := idl/records.idl
+GENERATED_DIR := kernel/wasm/generated
+IDLC_SOURCES := $(IDLC_DIR)/lexer.c $(IDLC_DIR)/parser.c $(IDLC_DIR)/emit_table.c $(IDLC_DIR)/emit_zig.c $(IDLC_DIR)/emit_c.c $(IDLC_DIR)/emit_conform.c
 IDLC_HEADERS := $(IDLC_DIR)/lexer.h $(IDLC_DIR)/parser.h $(IDLC_DIR)/ast.h $(IDLC_DIR)/emit.h
 FUZZ_SYSCALL_ARGS_BIN := $(BUILD_DIR)/fuzz_syscall_args
 SYSCALL_ARGS_SOURCE := kernel/wasm/syscall_args.zig
@@ -229,7 +233,8 @@ KERNEL_OBJECTS += $(WASM_SHIM_OBJECTS) $(WAMR_PLATFORM_OBJ) $(WAMR_OBJECTS) \
 	fuzz-object-store fuzz-wasm-shim fuzz-wasm-module fuzz-syscall-args \
 	model-check model-check-negative \
 	write-ordering-negative crash-test wow-demo wow-demo-negative hello-wasm counter-wasm \
-	verify-wamr clean
+	verify-wamr clean \
+	idlc idl-generate idl-check idl-negative
 
 all: iso
 
@@ -539,6 +544,32 @@ $(TEST_IDLC_BIN): $(IDLC_SOURCES) $(IDLC_HEADERS) $(HOSTED_DIR)/test_idlc.c $(HO
 	mkdir -p $(BUILD_DIR)
 	$(HOST_CC) $(HOST_CFLAGS) $(IDLC_SOURCES) $(HOSTED_DIR)/test_idlc.c -o $(TEST_IDLC_BIN)
 
+$(IDLC_BIN): $(IDLC_SOURCES) $(IDLC_HEADERS) $(IDLC_DIR)/main.c Makefile
+	mkdir -p $(BUILD_DIR)
+	$(HOST_CC) $(HOST_CFLAGS) $(IDLC_SOURCES) $(IDLC_DIR)/main.c -o $(IDLC_BIN)
+
+idlc: $(IDLC_BIN)
+
+idl-generate: $(IDLC_BIN) $(IDL_SYSCALLS) $(IDL_RECORDS)
+	mkdir -p $(GENERATED_DIR) sdk/zig sdk/c
+	$(IDLC_BIN) --emit=zig     --out=sdk/zig/jani.zig                     $(IDL_SYSCALLS)
+	$(IDLC_BIN) --emit=c       --out=sdk/c/jani.h                         $(IDL_SYSCALLS)
+	$(IDLC_BIN) --emit=table   --out=$(GENERATED_DIR)/syscall_table.h     $(IDL_SYSCALLS)
+	$(IDLC_BIN) --emit=conform --out=$(GENERATED_DIR)/records_conform.h   $(IDL_RECORDS)
+	@echo "idl-generate: four files written"
+
+idl-check: $(IDLC_BIN) $(IDL_SYSCALLS) $(IDL_RECORDS)
+	@rm -rf $(BUILD_DIR)/idl-check && mkdir -p $(BUILD_DIR)/idl-check
+	@$(IDLC_BIN) --emit=zig     --out=$(BUILD_DIR)/idl-check/jani.zig           $(IDL_SYSCALLS)
+	@$(IDLC_BIN) --emit=c       --out=$(BUILD_DIR)/idl-check/jani.h             $(IDL_SYSCALLS)
+	@$(IDLC_BIN) --emit=table   --out=$(BUILD_DIR)/idl-check/syscall_table.h    $(IDL_SYSCALLS)
+	@$(IDLC_BIN) --emit=conform --out=$(BUILD_DIR)/idl-check/records_conform.h  $(IDL_RECORDS)
+	@diff -u sdk/zig/jani.zig $(BUILD_DIR)/idl-check/jani.zig
+	@diff -u sdk/c/jani.h $(BUILD_DIR)/idl-check/jani.h
+	@diff -u $(GENERATED_DIR)/syscall_table.h $(BUILD_DIR)/idl-check/syscall_table.h
+	@diff -u $(GENERATED_DIR)/records_conform.h $(BUILD_DIR)/idl-check/records_conform.h
+	@echo "idl-check: generated files match their sources"
+
 $(FUZZ_SYSCALL_ARGS_BIN): $(SYSCALL_ARGS_HOSTED_OBJ) $(HOSTED_DIR)/fuzz_syscall_args.c kernel/wasm/syscall_args.h Makefile
 	mkdir -p $(BUILD_DIR)
 	$(HOST_CC) $(FUZZ_CFLAGS) $(HOSTED_DIR)/fuzz_syscall_args.c $(SYSCALL_ARGS_HOSTED_OBJ) -o $(FUZZ_SYSCALL_ARGS_BIN)
@@ -611,7 +642,7 @@ $(SYSCALLS_OBJ): $(SYSCALLS_SOURCE) kernel/wasm/syscalls.h kernel/wasm/component
 	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
 	$(ZIG_ENV) $(CC) $(CFLAGS) $(WAMR_INCLUDES) $(WAMR_DEFINES) -c $(SYSCALLS_SOURCE) -o $(SYSCALLS_OBJ)
 
-$(COMPONENT_OBJ): $(COMPONENT_SOURCE) kernel/wasm/component.h kernel/wasm/instance_state.h Makefile
+$(COMPONENT_OBJ): $(COMPONENT_SOURCE) kernel/wasm/component.h kernel/wasm/instance_state.h $(GENERATED_DIR)/records_conform.h Makefile
 	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
 	$(ZIG_ENV) $(CC) $(CFLAGS) -c $(COMPONENT_SOURCE) -o $(COMPONENT_OBJ)
 
