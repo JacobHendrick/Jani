@@ -657,6 +657,39 @@ Blueprint Part 6 carries the same figures; keep them in sync.
 5. **DRM uAPI version target** (D15). The i915 and newer `xe` kernel interfaces
    differ; which one Mesa is expected to bind against determines the driver's
    shape and needs deciding before Phase 10 work starts.
+6. **C++ as a first-party app and visual-component language.** Raised
+   2026-08-05, **deferred to Phase 8**, when the desktop environment is built
+   and the requirements of real rendering work are known. Deciding earlier
+   would be deciding without that data.
+
+   C++ is not excluded by the determinism contract. Tier 2 excludes
+   managed-runtime languages for GC and scheduler conflicts; Tier 3 excludes
+   JIT and OS threads. C++ needs none of these, so it is technically Tier 1
+   capable. The blueprint's preference for Zig is stated as SDK economics —
+   one language spanning kernel, services, and apps — not as a capability
+   limit.
+
+   **The gate is hot-swap (U3), and it should be settled before anything
+   else.** Hot-swap replaces a component's code while its persisted linear
+   memory survives. C++ objects in that memory hold vtable pointers into the
+   old module; after a swap they are stale, and silently so, because the
+   memory remains structurally valid. Zig's explicit dispatch does not create
+   this. If C++ cannot answer this, the choice is not a language preference
+   being declined — it is a pillar being traded away.
+
+   Two further costs, both specific to this system rather than to C++ in
+   general. Linear memory size is the per-tick disk write cost, so C++ runtime
+   setup, static initialization, and heap are paid on every commit — the same
+   trap as Zig's default 1 MiB stack, which made a fifty-byte component cost
+   1.08 MB per tick. And the payload law (object IDs and offsets, never
+   language pointers) runs against C++ idiom: `std::string`, `std::vector`,
+   and `shared_ptr` are pointer-dense, so a C++ SDK would fight the language's
+   defaults to make obeying the law easier than breaking it, which is the
+   SDK's stated job.
+
+   Nothing needs to be built now to keep this open. D3.15 in the 2026-08-05
+   IDL spec separates `idlc`'s emitters behind one interface, so an `sdk/cpp`
+   would be an addition rather than a rewrite.
 
 **Resolved during design:**
 
@@ -667,8 +700,11 @@ Blueprint Part 6 carries the same figures; keep them in sync.
 - *GPU for Chromium* — resolved by **D15**. All three tiers are in scope, and
   Mesa runs unmodified over a DRM-compatible uAPI, so Chromium's GPU process
   works rather than falling back to software rendering.
-- *C++ runtime for a native component tier* — moot. No browser is ported (D6),
-  and the tier now exists for the first-party Zig compositor (D14).
+- *C++ runtime for a native component tier* — moot **as originally posed**. No
+  browser is ported (D6), and the tier now exists for the first-party Zig
+  compositor (D14). Note that this resolution answered a narrow question:
+  whether C++ was needed to *host a ported browser*. It did not consider C++ as
+  a first-party app language, which is open question 6 above.
 
 ## Next step
 
