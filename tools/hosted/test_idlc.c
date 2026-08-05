@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "../idlc/lexer.h"
+#include "../idlc/parser.h"
 #include "check.h"
 
 unsigned long checks_passed;
@@ -180,6 +181,135 @@ static void test_empty_source_is_immediately_eof(void) {
     CHECK(lex_one(&lexer).kind == IDL_TOK_EOF);
 }
 
+static void test_parses_a_syscall_with_a_slice(void) {
+    const char source[] = "syscall log(message: slice<u8>) -> i32;";
+    struct idl_unit unit;
+
+    CHECK(idl_parse(&unit, source, sizeof(source) - 1u) == 1);
+    CHECK(unit.syscall_count == 1u);
+    CHECK(strcmp(unit.syscalls[0].name, "log") == 0);
+    CHECK(unit.syscalls[0].param_count == 1u);
+    CHECK(unit.syscalls[0].params[0].type == IDL_TYPE_SLICE_U8);
+    CHECK(strcmp(unit.syscalls[0].params[0].name, "message") == 0);
+    CHECK(unit.syscalls[0].result == IDL_TYPE_I32);
+}
+
+static void test_parses_every_type(void) {
+    const char source[] =
+        "syscall a(t: type-id, s: u32) -> i32;"
+        "syscall b(c: cap, o: u32, buf: slice<u8>) -> i64;"
+        "syscall c(x: cap?, p: ptr<i32>, d: u64) -> i32;"
+        "syscall d(code: i32);";
+    struct idl_unit unit;
+
+    CHECK(idl_parse(&unit, source, sizeof(source) - 1u) == 1);
+    CHECK(unit.syscall_count == 4u);
+    CHECK(unit.syscalls[0].params[0].type == IDL_TYPE_TYPE_ID);
+    CHECK(unit.syscalls[0].params[1].type == IDL_TYPE_U32);
+    CHECK(unit.syscalls[1].params[0].type == IDL_TYPE_CAP);
+    CHECK(unit.syscalls[1].params[2].type == IDL_TYPE_SLICE_U8);
+    CHECK(unit.syscalls[1].result == IDL_TYPE_I64);
+    CHECK(unit.syscalls[2].params[0].type == IDL_TYPE_CAP_OPT);
+    CHECK(unit.syscalls[2].params[1].type == IDL_TYPE_PTR_I32);
+    CHECK(unit.syscalls[2].params[2].type == IDL_TYPE_U64);
+    CHECK(unit.syscalls[3].result == IDL_TYPE_VOID);
+    CHECK(unit.syscalls[3].param_count == 1u);
+}
+
+static void test_parses_a_record(void) {
+    const char source[] =
+        "record component_root_record size 72 {\n"
+        "    magic: u64 @ 0;\n"
+        "    module_id: object-ref @ 16;\n"
+        "}";
+    struct idl_unit unit;
+
+    CHECK(idl_parse(&unit, source, sizeof(source) - 1u) == 1);
+    CHECK(unit.record_count == 1u);
+    CHECK(strcmp(unit.records[0].name, "component_root_record") == 0);
+    CHECK(unit.records[0].size == 72u);
+    CHECK(unit.records[0].field_count == 2u);
+    CHECK(strcmp(unit.records[0].fields[0].name, "magic") == 0);
+    CHECK(unit.records[0].fields[0].type == IDL_TYPE_U64);
+    CHECK(unit.records[0].fields[0].offset == 0u);
+    CHECK(unit.records[0].fields[1].type == IDL_TYPE_OBJECT_REF);
+    CHECK(unit.records[0].fields[1].offset == 16u);
+}
+
+static void test_parses_syscalls_and_records_together(void) {
+    const char source[] =
+        "syscall self() -> i32;\n"
+        "record h size 8 { magic: u64 @ 0; }\n"
+        "syscall exit(code: i32);\n";
+    struct idl_unit unit;
+
+    CHECK(idl_parse(&unit, source, sizeof(source) - 1u) == 1);
+    CHECK(unit.syscall_count == 2u);
+    CHECK(unit.record_count == 1u);
+}
+
+static void test_keywords_are_contextual_and_usable_as_names(void) {
+    const char source[] =
+        "syscall object_create(type: type-id, size: u32) -> i32;"
+        "record record size 16 { size: u64 @ 0; syscall: u64 @ 8; }";
+    struct idl_unit unit;
+
+    CHECK(idl_parse(&unit, source, sizeof(source) - 1u) == 1);
+    CHECK(unit.syscall_count == 1u);
+    CHECK(unit.syscalls[0].param_count == 2u);
+    CHECK(strcmp(unit.syscalls[0].params[1].name, "size") == 0);
+    CHECK(unit.syscalls[0].params[1].type == IDL_TYPE_U32);
+    CHECK(unit.record_count == 1u);
+    CHECK(strcmp(unit.records[0].name, "record") == 0);
+    CHECK(strcmp(unit.records[0].fields[0].name, "size") == 0);
+    CHECK(strcmp(unit.records[0].fields[1].name, "syscall") == 0);
+}
+
+static void test_rejects_unknown_types_and_bad_syntax(void) {
+    struct idl_unit unit;
+    const char bad_type[] = "syscall a(x: f32) -> i32;";
+    const char missing_semi[] = "syscall a() -> i32";
+    const char bad_keyword[] = "nonsense a() -> i32;";
+    const char missing_colon[] = "syscall a(x u32) -> i32;";
+    const char bad_slice[] = "syscall a(x: slice<u16>) -> i32;";
+    const char record_no_size[] = "record h { magic: u64 @ 0; }";
+
+    CHECK(idl_parse(&unit, bad_type, sizeof(bad_type) - 1u) == 0);
+    CHECK(unit.error[0] != '\0');
+    CHECK(unit.error_line == 1u);
+    CHECK(idl_parse(&unit, missing_semi, sizeof(missing_semi) - 1u) == 0);
+    CHECK(idl_parse(&unit, bad_keyword, sizeof(bad_keyword) - 1u) == 0);
+    CHECK(idl_parse(&unit, missing_colon, sizeof(missing_colon) - 1u) == 0);
+    CHECK(idl_parse(&unit, bad_slice, sizeof(bad_slice) - 1u) == 0);
+    CHECK(idl_parse(&unit, record_no_size, sizeof(record_no_size) - 1u) == 0);
+}
+
+static void test_reports_the_line_of_the_error(void) {
+    const char source[] =
+        "syscall a() -> i32;\n"
+        "syscall b() -> i32;\n"
+        "syscall c(x: f32) -> i32;\n";
+    struct idl_unit unit;
+
+    CHECK(idl_parse(&unit, source, sizeof(source) - 1u) == 0);
+    CHECK(unit.error_line == 3u);
+}
+
+static void test_rejects_overlong_names(void) {
+    char source[512];
+    struct idl_unit unit;
+    size_t index;
+
+    memcpy(source, "syscall ", 8u);
+    for (index = 0; index < 200u; index++) {
+        source[8u + index] = 'a';
+    }
+    memcpy(source + 208u, "() -> i32;", 10u);
+
+    CHECK(idl_parse(&unit, source, 218u) == 0);
+    CHECK(unit.error[0] != '\0');
+}
+
 int main(void) {
     checks_passed = 0;
 
@@ -192,6 +322,15 @@ int main(void) {
     test_skips_comments_and_tracks_lines();
     test_reports_unknown_punctuation();
     test_empty_source_is_immediately_eof();
+
+    test_parses_a_syscall_with_a_slice();
+    test_parses_every_type();
+    test_parses_a_record();
+    test_parses_syscalls_and_records_together();
+    test_keywords_are_contextual_and_usable_as_names();
+    test_rejects_unknown_types_and_bad_syntax();
+    test_reports_the_line_of_the_error();
+    test_rejects_overlong_names();
 
     printf("test_idlc: %lu checks passed\n", checks_passed);
     return 0;
