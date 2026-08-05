@@ -117,9 +117,22 @@ static int copy_name(
 
 static int parse_type(struct idl_parser *parser, enum idl_type *out) {
     struct idl_token token = parser->current;
+    int mutable_slice = 0;
 
     if (!expect(parser, IDL_TOK_IDENT, "expected a type")) {
         return 0;
+    }
+
+    if (token_matches(&token, "out")) {
+        mutable_slice = 1;
+        token = parser->current;
+        if (!expect(parser, IDL_TOK_IDENT, "expected a type after out")) {
+            return 0;
+        }
+        if (!token_matches(&token, "slice")) {
+            fail(parser, "out applies only to slice in IDL v1");
+            return 0;
+        }
     }
 
     if (token_matches(&token, "i32")) {
@@ -170,8 +183,13 @@ static int parse_type(struct idl_parser *parser, enum idl_type *out) {
         if (!expect(parser, IDL_TOK_RANGLE, "expected > after slice element")) {
             return 0;
         }
-        *out = IDL_TYPE_SLICE_U8;
+        *out = mutable_slice ? IDL_TYPE_SLICE_U8_OUT : IDL_TYPE_SLICE_U8;
         return 1;
+    }
+
+    if (mutable_slice) {
+        fail(parser, "out applies only to slice in IDL v1");
+        return 0;
     }
 
     if (token_matches(&token, "ptr")) {

@@ -1,11 +1,11 @@
 syscall log(message: slice<u8>) -> i32;
 syscall object_create(type: type-id, size: u32) -> i32;
-syscall object_read(slot: cap, offset: u32, buffer: slice<u8>) -> i32;
+syscall object_read(slot: cap, offset: u32, buffer: out slice<u8>) -> i32;
 syscall object_write(slot: cap, offset: u32, buffer: slice<u8>) -> i32;
 syscall object_size(slot: cap) -> i64;
 syscall cap_drop(slot: cap) -> i32;
 syscall message_send(target: cap, payload: slice<u8>, capability: cap?) -> i32;
-syscall message_recv(buffer: slice<u8>, capability_out: ptr<i32>) -> i32;
+syscall message_recv(buffer: out slice<u8>, capability_out: ptr<i32>) -> i32;
 syscall timer_set(delay_ticks: u64) -> i32;
 syscall time_logical() -> i64;
 syscall self() -> i32;

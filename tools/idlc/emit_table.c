@@ -41,6 +41,8 @@ const char *idl_type_name(enum idl_type type) {
         return "u64";
     case IDL_TYPE_SLICE_U8:
         return "slice<u8>";
+    case IDL_TYPE_SLICE_U8_OUT:
+        return "out slice<u8>";
     case IDL_TYPE_CAP:
         return "cap";
     case IDL_TYPE_CAP_OPT:
@@ -60,6 +62,7 @@ const char *idl_type_name(enum idl_type type) {
 static const char *parameter_letters(enum idl_type type) {
     switch (type) {
     case IDL_TYPE_SLICE_U8:
+    case IDL_TYPE_SLICE_U8_OUT:
         return "ii";
     case IDL_TYPE_TYPE_ID:
         return "II";

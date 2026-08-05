@@ -381,6 +381,140 @@ static void test_table_emitter_names_the_impl(void) {
     CHECK(strstr(buffer, "NativeSymbol jani_symbols[]") != NULL);
 }
 
+static void emit_source(
+    const char *source,
+    int (*emitter)(const struct idl_unit *, struct idl_writer *),
+    char *buffer,
+    size_t capacity
+) {
+    struct idl_unit unit;
+    struct idl_writer writer;
+
+    writer.buffer = buffer;
+    writer.capacity = capacity;
+    writer.length = 0;
+    writer.overflowed = 0;
+
+    CHECK(idl_parse(&unit, source, strlen(source)) == 1);
+    CHECK(emitter(&unit, &writer) == 1);
+    CHECK(writer.overflowed == 0);
+}
+
+static void test_zig_emitter_wraps_slices(void) {
+    char buffer[4096];
+
+    emit_source("syscall log(message: slice<u8>) -> i32;", idl_emit_zig,
+                buffer, sizeof(buffer));
+
+    CHECK(strstr(buffer,
+        "extern \"env\" fn jani_log(message_ptr: [*]const u8, "
+        "message_len: u32) i32;") != NULL);
+    CHECK(strstr(buffer, "pub fn log(message: []const u8) i32") != NULL);
+    CHECK(strstr(buffer, "@intCast(message.len)") != NULL);
+    CHECK(strstr(buffer, "do not edit") != NULL);
+}
+
+static void test_zig_emitter_lowers_type_id(void) {
+    char buffer[4096];
+
+    emit_source("syscall object_create(type: type-id, size: u32) -> i32;",
+                idl_emit_zig, buffer, sizeof(buffer));
+
+    CHECK(strstr(buffer, "type_high: i64, type_low: i64") != NULL);
+    CHECK(strstr(buffer, "size: u32") != NULL);
+    CHECK(strstr(buffer, "pub fn object_create(") != NULL);
+}
+
+static void test_zig_emitter_handles_mutable_slices_and_optionals(void) {
+    char buffer[4096];
+
+    emit_source(
+        "syscall message_recv(buffer: slice<u8>, capability_out: ptr<i32>)"
+        " -> i32;"
+        "syscall message_send(target: cap, payload: slice<u8>,"
+        " capability: cap?) -> i32;",
+        idl_emit_zig, buffer, sizeof(buffer));
+
+    CHECK(strstr(buffer, "capability_out: ?*i32") != NULL);
+    CHECK(strstr(buffer, "capability: i32") != NULL);
+    CHECK(strstr(buffer, "target: i32") != NULL);
+}
+
+static void test_zig_emitter_handles_void_and_empty_params(void) {
+    char buffer[4096];
+
+    emit_source("syscall self() -> i32;syscall exit(code: i32);",
+                idl_emit_zig, buffer, sizeof(buffer));
+
+    CHECK(strstr(buffer, "extern \"env\" fn jani_self() i32;") != NULL);
+    CHECK(strstr(buffer, "pub fn self() i32") != NULL);
+    CHECK(strstr(buffer, "extern \"env\" fn jani_exit(code: i32) void;")
+          != NULL);
+}
+
+static void test_out_slices_are_mutable_and_plain_slices_are_const(void) {
+    char buffer[4096];
+    struct idl_unit unit;
+    const char source[] =
+        "syscall object_read(slot: cap, buffer: out slice<u8>) -> i32;"
+        "syscall object_write(slot: cap, buffer: slice<u8>) -> i32;";
+
+    CHECK(idl_parse(&unit, source, sizeof(source) - 1u) == 1);
+    CHECK(unit.syscalls[0].params[1].type == IDL_TYPE_SLICE_U8_OUT);
+    CHECK(unit.syscalls[1].params[1].type == IDL_TYPE_SLICE_U8);
+
+    emit_source(source, idl_emit_zig, buffer, sizeof(buffer));
+
+    CHECK(strstr(buffer,
+        "fn jani_object_read(slot: i32, buffer_ptr: [*]u8, "
+        "buffer_len: u32) i32;") != NULL);
+    CHECK(strstr(buffer,
+        "fn jani_object_write(slot: i32, buffer_ptr: [*]const u8, "
+        "buffer_len: u32) i32;") != NULL);
+    CHECK(strstr(buffer, "pub fn object_read(slot: i32, buffer: []u8) i32")
+          != NULL);
+    CHECK(strstr(buffer,
+        "pub fn object_write(slot: i32, buffer: []const u8) i32") != NULL);
+}
+
+static void test_out_is_rejected_on_non_slice_types(void) {
+    struct idl_unit unit;
+    const char bad[] = "syscall a(x: out u32) -> i32;";
+
+    CHECK(idl_parse(&unit, bad, sizeof(bad) - 1u) == 0);
+    CHECK(unit.error[0] != '\0');
+}
+
+static void test_c_emitter_declares_every_syscall(void) {
+    char buffer[4096];
+
+    emit_source("syscall self() -> i32;syscall exit(code: i32);",
+                idl_emit_c, buffer, sizeof(buffer));
+
+    CHECK(strstr(buffer, "int32_t jani_self(void);") != NULL);
+    CHECK(strstr(buffer, "void jani_exit(int32_t code);") != NULL);
+    CHECK(strstr(buffer, "#ifndef JANI_SDK_C_JANI_H") != NULL);
+    CHECK(strstr(buffer, "#include <stdint.h>") != NULL);
+}
+
+static void test_c_emitter_lowers_slices_and_type_ids(void) {
+    char buffer[4096];
+
+    emit_source(
+        "syscall object_create(type: type-id, size: u32) -> i32;"
+        "syscall log(message: slice<u8>) -> i32;"
+        "syscall object_size(slot: cap) -> i64;",
+        idl_emit_c, buffer, sizeof(buffer));
+
+    CHECK(strstr(buffer,
+        "int32_t jani_object_create(int64_t type_high, int64_t type_low, "
+        "uint32_t size);") != NULL);
+    CHECK(strstr(buffer,
+        "int32_t jani_log(uint32_t message_ptr, uint32_t message_len);")
+        != NULL);
+    CHECK(strstr(buffer, "int64_t jani_object_size(int32_t slot);") != NULL);
+}
+
 int main(void) {
     checks_passed = 0;
 
@@ -407,6 +541,15 @@ int main(void) {
     test_signature_reports_overflow();
     test_writer_flags_overflow_instead_of_truncating();
     test_table_emitter_names_the_impl();
+
+    test_zig_emitter_wraps_slices();
+    test_zig_emitter_lowers_type_id();
+    test_zig_emitter_handles_mutable_slices_and_optionals();
+    test_zig_emitter_handles_void_and_empty_params();
+    test_out_slices_are_mutable_and_plain_slices_are_const();
+    test_out_is_rejected_on_non_slice_types();
+    test_c_emitter_declares_every_syscall();
+    test_c_emitter_lowers_slices_and_type_ids();
 
     printf("test_idlc: %lu checks passed\n", checks_passed);
     return 0;

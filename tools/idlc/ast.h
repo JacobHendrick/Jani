@@ -17,6 +17,7 @@ enum idl_type {
     IDL_TYPE_I64,
     IDL_TYPE_U64,
     IDL_TYPE_SLICE_U8,
+    IDL_TYPE_SLICE_U8_OUT,
     IDL_TYPE_CAP,
     IDL_TYPE_CAP_OPT,
     IDL_TYPE_PTR_I32,
