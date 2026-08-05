@@ -570,6 +570,9 @@ idl-check: $(IDLC_BIN) $(IDL_SYSCALLS) $(IDL_RECORDS)
 	@diff -u $(GENERATED_DIR)/records_conform.h $(BUILD_DIR)/idl-check/records_conform.h
 	@echo "idl-check: generated files match their sources"
 
+idl-negative: $(IDLC_BIN) $(IDL_SYSCALLS) $(IDL_RECORDS)
+	tools/idl_negative.sh $(IDLC_BIN) $(BUILD_DIR) $(GENERATED_DIR)
+
 $(FUZZ_SYSCALL_ARGS_BIN): $(SYSCALL_ARGS_HOSTED_OBJ) $(HOSTED_DIR)/fuzz_syscall_args.c kernel/wasm/syscall_args.h Makefile
 	mkdir -p $(BUILD_DIR)
 	$(HOST_CC) $(FUZZ_CFLAGS) $(HOSTED_DIR)/fuzz_syscall_args.c $(SYSCALL_ARGS_HOSTED_OBJ) -o $(FUZZ_SYSCALL_ARGS_BIN)
