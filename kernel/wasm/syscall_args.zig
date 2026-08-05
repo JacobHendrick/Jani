@@ -62,6 +62,24 @@ export fn jani_syscall_clamp_read(
     return 1;
 }
 
+export fn jani_syscall_deadline(
+    logical_time: u64,
+    delay_ticks: u64,
+    deadline_out: [*c]u64,
+) callconv(.c) c_int {
+    if (deadline_out == null) {
+        return 0;
+    }
+
+    const sum = @addWithOverflow(logical_time, delay_ticks);
+    if (sum[1] != 0) {
+        return 0;
+    }
+
+    deadline_out.* = sum[0];
+    return 1;
+}
+
 export fn jani_syscall_check_transfer(
     memory_size: u64,
     pointer: u32,

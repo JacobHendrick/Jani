@@ -232,7 +232,7 @@ export fn jani_syscall_deadline(
 - [ ] **Step 5: Run the test to verify it passes**
 
 Run: `make test 2>&1 | tail -20`
-Expected: PASS. `test_syscall_args` reports 41 + 12 = **53 checks passed**, and the suite total rises from 4,439 to 4,451.
+Expected: PASS. `test_syscall_args` reports 41 + 15 = **56 checks passed**, and the suite total rises from 4,439 to 4,454.
 
 - [ ] **Step 6: Commit**
 

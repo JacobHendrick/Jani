@@ -82,6 +82,31 @@ static void test_transfer_checks_both_spans(void) {
     CHECK(jani_syscall_check_transfer(MEMORY_64K, 0xFFFFFFFFu, 100, 0, 1) == 0);
 }
 
+static void test_deadline_adds_without_overflow(void) {
+    uint64_t deadline = 0;
+
+    CHECK(jani_syscall_deadline(0, 0, &deadline) == 1);
+    CHECK(deadline == 0);
+    CHECK(jani_syscall_deadline(10, 1, &deadline) == 1);
+    CHECK(deadline == 11);
+    CHECK(jani_syscall_deadline(0, UINT64_MAX, &deadline) == 1);
+    CHECK(deadline == UINT64_MAX);
+    CHECK(jani_syscall_deadline(UINT64_MAX, 0, &deadline) == 1);
+    CHECK(deadline == UINT64_MAX);
+}
+
+static void test_deadline_rejects_overflow(void) {
+    uint64_t deadline = 12345;
+
+    CHECK(jani_syscall_deadline(1, UINT64_MAX, &deadline) == 0);
+    CHECK(deadline == 12345);
+    CHECK(jani_syscall_deadline(UINT64_MAX, 1, &deadline) == 0);
+    CHECK(deadline == 12345);
+    CHECK(jani_syscall_deadline(UINT64_MAX, UINT64_MAX, &deadline) == 0);
+    CHECK(deadline == 12345);
+    CHECK(jani_syscall_deadline(0, 0, NULL) == 0);
+}
+
 int main(void) {
     checks_passed = 0;
 
@@ -92,6 +117,8 @@ int main(void) {
     test_optional_slot_accepts_none();
     test_clamp_read();
     test_transfer_checks_both_spans();
+    test_deadline_adds_without_overflow();
+    test_deadline_rejects_overflow();
 
     printf("test_syscall_args: %lu checks passed\n", checks_passed);
     return 0;

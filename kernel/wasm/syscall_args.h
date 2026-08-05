@@ -24,4 +24,10 @@ int jani_syscall_check_transfer(
     uint32_t length
 );
 
+int jani_syscall_deadline(
+    uint64_t logical_time,
+    uint64_t delay_ticks,
+    uint64_t *deadline_out
+);
+
 #endif
