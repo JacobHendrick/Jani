@@ -87,7 +87,7 @@ static int32_t jani_object_create_impl(
     wasm_exec_env_t exec_env,
     int64_t type_high,
     int64_t type_low,
-    int32_t size
+    uint32_t size
 ) {
     struct object_id id;
     uint8_t *zeros;
@@ -96,8 +96,7 @@ static int32_t jani_object_create_impl(
 
     (void)exec_env;
 
-    if ((current == NULL) || (size < 0) ||
-        ((uint32_t)size > SYSCALL_TRANSFER_MAX)) {
+    if ((current == NULL) || (size > SYSCALL_TRANSFER_MAX)) {
         return JANI_EINVAL;
     }
 
@@ -139,7 +138,7 @@ static int32_t jani_object_create_impl(
 static int32_t jani_object_read_impl(
     wasm_exec_env_t exec_env,
     int32_t slot,
-    int32_t offset,
+    uint32_t offset,
     uint32_t pointer,
     uint32_t length
 ) {
@@ -156,16 +155,13 @@ static int32_t jani_object_read_impl(
     if (!slot_allows(slot, COMPONENT_RIGHTS_READ)) {
         return JANI_EPERM;
     }
-    if (offset < 0) {
-        return JANI_EINVAL;
-    }
 
     if (!object_store_get(current->store, id, &header, &payload,
                           &payload_size)) {
         return JANI_ENOENT;
     }
 
-    if (!jani_syscall_clamp_read(payload_size, (uint32_t)offset, length,
+    if (!jani_syscall_clamp_read(payload_size, offset, length,
                                  &clamped)) {
         return JANI_ERANGE;
     }
@@ -176,7 +172,7 @@ static int32_t jani_object_read_impl(
     }
 
     if (clamped != 0) {
-        memcpy(destination, payload + (uint32_t)offset, clamped);
+        memcpy(destination, payload + offset, clamped);
     }
 
     return (int32_t)clamped;
@@ -185,7 +181,7 @@ static int32_t jani_object_read_impl(
 static int32_t jani_object_write_impl(
     wasm_exec_env_t exec_env,
     int32_t slot,
-    int32_t offset,
+    uint32_t offset,
     uint32_t pointer,
     uint32_t length
 ) {
@@ -203,7 +199,7 @@ static int32_t jani_object_write_impl(
     if (!slot_allows(slot, COMPONENT_RIGHTS_WRITE)) {
         return JANI_EPERM;
     }
-    if ((offset < 0) || (length > SYSCALL_TRANSFER_MAX)) {
+    if (length > SYSCALL_TRANSFER_MAX) {
         return JANI_EINVAL;
     }
 
@@ -212,7 +208,7 @@ static int32_t jani_object_write_impl(
         return JANI_ENOENT;
     }
 
-    if (!jani_syscall_check_span(payload_size, (uint32_t)offset, length)) {
+    if (!jani_syscall_check_span(payload_size, offset, length)) {
         return JANI_ERANGE;
     }
 
@@ -228,7 +224,7 @@ static int32_t jani_object_write_impl(
 
     memcpy(updated, payload, payload_size);
     if (length != 0) {
-        memcpy(updated + (uint32_t)offset, source, length);
+        memcpy(updated + offset, source, length);
     }
 
     stored = object_store_put(current->store, id, header.type_id,
@@ -369,15 +365,22 @@ static int32_t jani_message_recv_impl(
 
 static int32_t jani_timer_set_impl(
     wasm_exec_env_t exec_env,
-    int64_t delay_ticks
+    uint64_t delay_ticks
 ) {
+    uint64_t deadline;
+
     (void)exec_env;
 
-    if ((current == NULL) || (delay_ticks < 0)) {
+    if (current == NULL) {
         return JANI_EINVAL;
     }
 
-    current->timer_deadline = current->logical_time + (uint64_t)delay_ticks;
+    if (!jani_syscall_deadline(current->logical_time, delay_ticks,
+                               &deadline)) {
+        return JANI_EINVAL;
+    }
+
+    current->timer_deadline = deadline;
     current->timer_armed = 1;
     return 0;
 }

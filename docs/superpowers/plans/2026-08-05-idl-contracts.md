@@ -343,7 +343,7 @@ make kernel 2>&1 | tail -5
 make wow-demo 2>&1 | tail -15
 ```
 
-Expected: `make test` 4,451 checks; `make kernel` links; `make wow-demo` 3/3 cycles. The counter still resumes across power-off, and its sixteen first-boot syscall assertions still pass.
+Expected: `make test` 4,669 checks; `make kernel` links; `make wow-demo` 3/3 cycles. The counter still resumes across power-off, and its eighteen first-boot syscall assertions still pass, plus two more on the first tick.
 
 - [ ] **Step 5: Commit**
 
