@@ -32,12 +32,12 @@ It is included so the plan is executable rather than blocked. If Jacob changes t
 ```
 syscall log(message: slice<u8>) -> i32;
 syscall object_create(type: type-id, size: u32) -> i32;
-syscall object_read(slot: cap, offset: u32, buffer: slice<u8>) -> i32;
+syscall object_read(slot: cap, offset: u32, buffer: out slice<u8>) -> i32;
 syscall object_write(slot: cap, offset: u32, buffer: slice<u8>) -> i32;
 syscall object_size(slot: cap) -> i64;
 syscall cap_drop(slot: cap) -> i32;
 syscall message_send(target: cap, payload: slice<u8>, capability: cap?) -> i32;
-syscall message_recv(buffer: slice<u8>, capability_out: ptr<i32>) -> i32;
+syscall message_recv(buffer: out slice<u8>, capability_out: out i32) -> i32;
 syscall timer_set(delay_ticks: u64) -> i32;
 syscall time_logical() -> i64;
 syscall self() -> i32;
@@ -52,10 +52,15 @@ syscall exit(code: i32);
 | `type-id` | `i64 high, i64 low` | `II` | none (lowering only) |
 | `cap` | `i32` | `i` | `jani_syscall_check_slot` |
 | `cap?` | `i32` | `i` | `jani_syscall_check_optional_slot` |
-| `ptr<i32>` | `u32` | `i` | `jani_syscall_check_span` |
 | `u32`, `i32` | `i32` | `i` | none |
 | `u64`, `i64` | `i64` | `I` | none |
 | return `i32` / `i64` / absent | — | `i` / `I` / empty | — |
+
+`out` is a direction modifier, not a type: it applies to `slice<u8>` and to
+`i32`, and does not change lowering. `out slice<u8>` lowers exactly as
+`slice<u8>`; `out i32` lowers as one `i32` and emits `?*i32` on the guest side,
+where address zero already means "no output pointer". `ptr<i32>` was removed in
+`fc2054a2` — it was a second spelling for the same concept.
 
 **These rules reproduce all twelve existing signature strings exactly** — verified against `kernel/wasm/syscalls.c:424-437`. Task 6 asserts this, so a lowering bug fails a test rather than corrupting arguments.
 
@@ -1200,9 +1205,11 @@ This is the integration that makes the generated files load-bearing. `make wow-d
 
 - [ ] **Step 1: Replace the hand-written table.** Delete `syscalls.c:424-437` and put `#include "generated/syscall_table.h"` in its place.
 
-- [ ] **Step 2: Replace the guest externs.** Delete `counter.zig:1-11` and add `const jani = @import("jani");`, then rewrite the call sites to `jani.log(...)`, `jani.object_create(...)` and so on. The slice-taking wrappers mean `say` becomes `_ = jani.log(message);` with no `.ptr`/`.len` split.
+- [ ] **Step 2: Replace the guest externs.** Delete the twelve `extern "env"` lines at the top of `counter.zig` and add `const jani = @import("jani");`, then rewrite the call sites to `jani.log(...)`, `jani.object_create(...)` and so on. The slice-taking wrappers mean `say` becomes `_ = jani.log(message);` with no `.ptr`/`.len` split, and `probe_objects` passes `&written` as `written[0..]`.
 
-- [ ] **Step 3: Add the SDK to the component's module path.** In the `$(COUNTER_WASM)` rule, add `--mod jani::sdk/zig/jani.zig --deps jani` (or the `build.zig` equivalent the existing rule uses).
+`JANI_EINVAL` and `JANI_ERANGE` stay hand-written in the component. The IDL describes signatures, not the error enum; carrying it would mean new grammar, and grammar is Jacob's. Noted as a candidate for a later slice — the codes are ABI, since Task 2's assertions pin them.
+
+- [ ] **Step 3: Add the SDK to the component's module path.** The `$(COUNTER_WASM)` rule invokes `zig build-exe` directly with no module graph, so add `--dep jani -Mjani=sdk/zig/jani.zig` alongside the existing `-Mroot=$(COUNTER_SOURCE)` form. Zig's module flags are version-sensitive; confirm against `third_party/zig/zig build-exe --help` before assuming a spelling. Keep `--stack 16384` — Zig's 1 MiB default is the per-tick write cost.
 
 - [ ] **Step 4: Run every gate**
 
