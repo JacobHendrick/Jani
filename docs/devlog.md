@@ -600,4 +600,90 @@ gate — the same reasoning as `model-check-negative`, and the reason
 Still assumed: that the physical device honors a flush. Only real hardware
 settles it.
 
+## 2026-08-06 — The IDL becomes the source, and a checked gate is not the same as an adopted one
+
+Slice 3. `idl/syscalls.idl` and `idl/records.idl` are now the single source for
+the twelve syscall signatures and the four on-disk record layouts. A C tool,
+`tools/idlc`, parses them and drives four independent emitters: a Zig guest SDK,
+a C guest SDK, the WAMR `NativeSymbol` table the kernel includes, and a header of
+`_Static_assert`s that pins the hand-written on-disk structs. Generated files are
+committed; `make idl-check` fails if they drift from their source.
+
+**The `_impl` bodies are never generated, and neither are the on-disk structs.**
+The IDL owns the declarations on both sides of the boundary — what the guest
+imports and what the host registers. It does not own the implementations or the
+C structs, which stay hand-written and are *asserted against* the IDL rather than
+produced from it. That split is deliberate: generating a struct means the
+generator decides the disk format, and the disk format is permanent.
+
+**D3.11: four arguments were declared signed and then rejected at runtime for
+being negative.** `object_create`'s `size`, `object_read` and `object_write`'s
+`offset`, and `timer_set`'s `delay`. Every one of those guards existed only to
+undo a wrong declaration. Making the arguments unsigned deletes the guard and the
+bug class together — "negative" stops being representable rather than being
+caught.
+
+**Three of the four were safe to change directly. `timer_set` was not.** The
+other three have an upper bound sitting behind the sign check — `size` against
+`SYSCALL_TRANSFER_MAX`, both offsets against the object's own extent — so
+removing the sign check leaves something still bounding the value. `timer_set`
+had nothing behind it. `logical_time + delay_ticks` in `u64` wraps, and a wrapped
+deadline is in the past, so a component asking for a distant timer would get an
+immediate one. The checked-deadline validator landed as its own commit *before*
+the signature change, so the guard and the ABI move are separately bisectable.
+
+**The overflow probe cannot live in `jani_init`.** `logical_time` only advances
+in `component_invoke_timer`, so it is 0 when `jani_init` runs, and at 0 no `u64`
+delay can overflow the sum — the reject branch is unreachable and an assertion
+there passes with or without the guard. The probe runs on the first tick instead,
+and derives its boundary from the clock: `headroom = ~now` makes `now + headroom`
+land exactly on `UINT64_MAX` (accepted) and `headroom + 1` the first value that
+overflows (rejected), so accept and reject are adjacent integers regardless of
+what the clock actually reads. Verified it discriminates by replacing the guard
+with a bare addition — `timer_set rejects overflow` is the only assertion that
+moves.
+
+**Two error codes moved, and nothing in the tree had ever asserted either one.**
+An out-of-range offset to `object_read` or `object_write` used to hit the
+`offset < 0` guard and return `EINVAL`; it now reaches the range check and
+returns `ERANGE`. That is the more honest code once the argument is unsigned, but
+it was a side effect of a change whose whole claim was that the ABI did not move.
+A grep for `JANI_ERANGE` found it defined in `component.h` and referenced
+nowhere else — the counter's bounds check asserted `< 0`, which passes under
+either value. The guest now pins both codes exactly. Error codes are ABI; if
+nothing asserts them they drift silently, and the drift is invisible precisely
+because every wrong answer is still negative.
+
+**The lowering rules reproduce all twelve signature strings exactly.** `(ii)i`,
+`(IIi)i`, `(iiii)i`, `(i)I`, `(I)i`, `()I`, `(i)` and the rest — the generated
+table came out byte-identical to the hand-written one, which is the evidence the
+emitters are right. `out` became a general direction modifier rather than a
+slice-specific one, and `ptr<i32>` was dropped: `out slice<u8>` and `ptr<i32>`
+were two spellings for "the host writes here", and in a permanent format that
+redundancy outlives its excuse. Lowering is unchanged either way.
+
+**The lesson of the slice: generating a file and checking it is not the same as
+adopting it, and only adoption is load-bearing.** For most of the slice
+`make idl-check` was green and proving nothing about syscalls. It regenerates the
+four outputs and diffs them against the committed copies — it never read
+`syscalls.c` or `counter.zig`. A hand-edit to `jani_symbols[]` would have sailed
+straight through. Records were real the whole time for an unrelated reason:
+`records_conform.h` is `#include`d by `component.c`, so its assertions fire at
+build time. Syscalls only became real when the second copy was *deleted* —
+`syscalls.c` now includes the generated table and `counter.zig` declares no
+externs at all. The equality between generated and hand-written was the proof the
+generator worked; it was never a reason to keep both. A drift gate that compares
+two artifacts neither of which is compiled is a gate over nothing.
+
+Gates: `make test` 4,669 checks across thirteen binaries (`test_idlc` at 215),
+`make kernel` links, `make idl-check` matches, `make idl-negative` 3/3 defects
+rejected (a retyped argument, a moved record field, a deleted syscall),
+`make wow-demo` 3/3 cycles with 20/20 syscall assertions and no `SYSCALL FAIL`
+in the serial log (the end count varies by a tick between runs, for the reason
+the 2026-08-04 entry gives), `make crash-test` 25/25 with `RECOVERY OK` and 4
+objects consistent across ~181 workload rounds.
+
+Still assumed, and unchanged by any of this: that the physical device honors a
+flush.
+
 <!-- Next entry goes here -->
