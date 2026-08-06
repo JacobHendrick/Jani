@@ -1,12 +1,25 @@
 #include "runtime.h"
 
 #include "wasm_export.h"
+#include "platform_common.h"
 
 #include "component.h"
 #include "syscalls.h"
 #include "../lib/printk.h"
 #include "../lib/string.h"
 #include "../mm/heap.h"
+
+_Static_assert(WASM_ENABLE_INTERP == 1,
+               "determinism contract requires the classic interpreter");
+_Static_assert(WASM_ENABLE_JIT == 0,
+               "determinism contract requires JIT off; a JIT may choose "
+               "different NaN payloads than the interpreter");
+_Static_assert(WASM_ENABLE_AOT == 0,
+               "determinism contract requires AOT off; see "
+               "docs/superpowers/specs/2026-08-03-wow-demo-design.md");
+_Static_assert(WASM_ENABLE_FAST_INTERP == 0,
+               "determinism contract assumes the classic interpreter's "
+               "float lowering; fast-interp has its own");
 
 #define JANI_WASM_STACK_SIZE  (64 * 1024)
 #define JANI_WASM_HEAP_SIZE   (16 * 1024)

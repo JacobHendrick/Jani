@@ -686,4 +686,72 @@ objects consistent across ~181 workload rounds.
 Still assumed, and unchanged by any of this: that the physical device honors a
 flush.
 
+## 2026-08-06 (later) — The determinism contract was true for the wrong reason
+
+Slice 3 merged to `main` as a fast-forward, 16 commits. Then went looking at the
+one item the slice 2 spec claimed was already done and wasn't.
+
+`2026-08-03-wow-demo-design.md` said the determinism contract was "enforced in
+the WAMR port now," and listed "NaN canonicalization enabled" first. Nothing in
+the tree does it, and **vendored WAMR has no build option for it** — no
+`WASM_ENABLE_NAN_*` anywhere in `core/config.h` or the sources. The classic
+interpreter's float opcodes expand to plain C operators;
+`DEF_OP_NUMERIC(float32, float32, F32, /)` is a literal `/=` on `float` against
+the operand stack. So NaN behaviour is whatever the hardware does, and there was
+no knob to turn.
+
+**That last fact is what made this measurable on Linux instead of in QEMU.**
+Because the interpreter is a straight C operator on `float`, a hosted test
+compiled for x86-64 exercises the identical code path the kernel will — same
+architecture, same SSE, same operators. `tools/hosted/test_determinism.c` runs
+under the normal ASan/UBSan gate and reports 4,109 checks.
+
+**The measurement splits cleanly in two, and only one half was ever a problem.**
+NaN *produced* from non-NaN operands is already canonical: `0.0/0.0` and
+`inf-inf` both give `0xFFC00000` for f32 and `0xFFF8000000000000` for f64 —
+payload MSB set, all other payload bits zero, which is exactly WASM's canonical
+NaN, whose sign bit the spec leaves unspecified. Stable across 4,096 repetitions.
+NaN *propagated* through an operation keeps its payload: `0x7FC01234 + 1.0`
+returns `0x7FC01234`, a signalling NaN is quieted by setting bit 22 and otherwise
+preserved, and with two NaN operands the first wins. That second half is not
+canonicalization and never was.
+
+**The contract holds anyway, for a reason the original bullet didn't state: there
+is no host-side source of NaN payloads.** None of the twelve syscalls accepts or
+returns a float. A payload can only enter a computation from the component's own
+constants or its own linear memory, and linear memory is snapshotted and restored
+bit-exactly. Every payload a component can observe is one it produced itself from
+deterministic inputs, so resume reproduces exactly. The residual exposure is
+portability, not reproducibility: a component reinterpreting a self-authored NaN
+payload as an integer would get a value a *different* engine might compute
+differently. That matters only if Jani ever gains a second execution engine.
+
+**Which is why the preconditions are now assertions rather than prose.** Four
+`_Static_assert`s in `kernel/wasm/runtime.c`: interpreter on, AOT off, JIT off,
+fast-interp off. Verified both that can fail actually do — `-DWASM_ENABLE_AOT=1`
+and `-DWASM_ENABLE_FAST_INTERP=1` each fail the kernel build with a message
+naming the spec. The JIT one cannot fail on its own, because WAMR forces
+`WASM_ENABLE_JIT` to 0 whenever AOT is 0; it is guarded by the AOT assertion
+rather than independent, which is worth knowing before trusting it alone.
+`runtime.c` had to gain `#include "platform_common.h"` for any of this to
+compile — `wasm_export.h` does not pull `config.h`, so three of the four macros
+were simply undeclared.
+
+**A detour worth recording: the first attempt measured this in the kernel and
+tripped an unrelated gate.** Adding a float probe to `counter.zig` grew the
+module by 479 bytes and the boot then failed with "instantiate leaked 68752
+bytes on the second pass." It was not a leak. The module still declares one page
+of linear memory — checked by parsing the memory section — so demand was
+unchanged. The leak test asserts `kheap_used_bytes()` is *exactly equal* across
+two instantiate/destroy rounds, and that high-water mark moves whenever the free
+list cannot reuse a freed block. A 479-byte change to the module copy was enough
+to shift allocation sizes and defeat reuse. The gate conflates "leaked" with
+"allocator did not reuse," so it fails on benign fragmentation. Left as-is and
+unfixed — worth knowing before anyone grows a component and reads that message
+as a real leak.
+
+Gates: `make test` 8,778 checks across fourteen binaries, `make kernel` links,
+`make idl-check` matches, `make idl-negative` 3/3, `make wow-demo` 3/3 cycles
+with 20/20 syscall assertions.
+
 <!-- Next entry goes here -->

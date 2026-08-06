@@ -249,9 +249,47 @@ component is not re-initialized; it is continued.
 Enforced in the WAMR port now, per the blueprint's warning that it is nearly
 free at this stage and unpayable later:
 
-- NaN canonicalization enabled.
 - No syscall exposes wall-clock time, entropy, or a host address.
 - `jani_time_logical` returns a counter, not a clock.
+- NaN behaviour is pinned by measurement rather than by canonicalization —
+  **amended 2026-08-06, see below.**
+
+**Amendment, 2026-08-06.** The first bullet originally read "NaN
+canonicalization enabled." That was never implemented, and vendored WAMR has no
+build option for it: the classic interpreter's float opcodes expand to plain C
+operators (`DEF_OP_NUMERIC(float32, float32, F32, /)` is a literal `/=` on
+`float`), so NaN behaviour is whatever the host architecture does. What was
+measured on x86-64 and is now pinned by `tools/hosted/test_determinism.c`:
+
+- **NaN *produced* from non-NaN operands is already canonical and stable.**
+  `0.0/0.0` and `inf-inf` both yield `0xFFC00000` (f32) and
+  `0xFFF8000000000000` (f64) — payload MSB set, every other payload bit zero,
+  which is exactly WASM's canonical NaN, whose sign bit the spec leaves
+  unspecified. Identical across 4,096 repetitions.
+- **NaN *propagated* through an operation keeps its payload.** `0x7FC01234 + 1.0`
+  gives back `0x7FC01234`; a signalling NaN is quieted by setting bit 22 and
+  otherwise preserved; with two NaN operands the first one wins. This is *not*
+  canonicalization, and the WASM spec permits it precisely because it varies
+  between implementations.
+
+The contract still holds, but for a different reason than the original bullet
+claimed. A payload can only enter a computation from the component's own
+constants or its own linear memory — no syscall accepts or returns a float, so
+there is **no host-side source of NaN payloads**. Every payload a component can
+observe is one it produced itself from deterministic inputs, and linear memory
+is snapshotted and restored bit-exactly, so resume reproduces exactly.
+
+This reasoning depends on the engine, not just on the architecture, so the four
+preconditions are now `_Static_assert`s in `kernel/wasm/runtime.c`: interpreter
+on, AOT off, JIT off, fast-interp off. Enabling AOT or fast-interp fails the
+kernel build with a message naming this document. WAMR forces JIT off whenever
+AOT is off, so that assertion is guarded by the AOT one rather than independent.
+
+What remains genuinely unaddressed: a component that reinterprets a
+self-authored NaN payload as an integer would observe a value that a *different*
+engine could compute differently. That is a portability limit, not a
+reproducibility one, and it becomes real only if Jani ever gains a second
+execution engine.
 
 Wall time never enters a component's world. That is required by the
 determinism contract anyway, and it dissolves the hardest question in
