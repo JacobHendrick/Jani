@@ -91,6 +91,7 @@ HELLO_WASM := $(BUILD_DIR)/hello.wasm
 HELLO_SOURCE := components/hello/hello.zig
 COUNTER_WASM := $(BUILD_DIR)/counter.wasm
 COUNTER_SOURCE := components/counter/counter.zig
+SDK_ZIG := sdk/zig/jani.zig
 
 LINKER_SCRIPT := kernel/boot/linker.ld
 LIMINE_CONFIG := kernel/boot/limine.conf
@@ -618,11 +619,12 @@ $(HELLO_WASM): $(HELLO_SOURCE) Makefile
 	$(ZIG_ENV) $(ZIG) build-exe -target wasm32-freestanding -O ReleaseSmall \
 	  -fno-entry -rdynamic --export=run $(HELLO_SOURCE) -femit-bin=$(HELLO_WASM)
 
-$(COUNTER_WASM): $(COUNTER_SOURCE) Makefile
+$(COUNTER_WASM): $(COUNTER_SOURCE) $(SDK_ZIG) Makefile
 	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
 	$(ZIG_ENV) $(ZIG) build-exe -target wasm32-freestanding -O ReleaseSmall \
 	  -fno-entry -rdynamic --stack 16384 --export=jani_init \
-	  --export=jani_on_timer --export=jani_on_message $(COUNTER_SOURCE) \
+	  --export=jani_on_timer --export=jani_on_message \
+	  --dep jani -Mroot=$(COUNTER_SOURCE) -Mjani=$(SDK_ZIG) \
 	  -femit-bin=$(COUNTER_WASM)
 
 counter-wasm: $(COUNTER_WASM)

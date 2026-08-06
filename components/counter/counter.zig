@@ -1,14 +1,4 @@
-extern "env" fn jani_log(ptr: [*]const u8, len: u32) i32;
-extern "env" fn jani_timer_set(delay_ticks: u64) i32;
-extern "env" fn jani_object_create(type_high: i64, type_low: i64, size: u32) i32;
-extern "env" fn jani_object_read(slot: i32, offset: u32, ptr: [*]u8, len: u32) i32;
-extern "env" fn jani_object_write(slot: i32, offset: u32, ptr: [*]const u8, len: u32) i32;
-extern "env" fn jani_object_size(slot: i32) i64;
-extern "env" fn jani_cap_drop(slot: i32) i32;
-extern "env" fn jani_message_send(target: i32, ptr: [*]const u8, len: u32, cap: i32) i32;
-extern "env" fn jani_message_recv(ptr: [*]u8, len: u32, cap_out: ?*i32) i32;
-extern "env" fn jani_time_logical() i64;
-extern "env" fn jani_self() i32;
+const jani = @import("jani");
 
 const TICK_DELAY: u64 = 1;
 const PROBE_BYTES: u32 = 64;
@@ -23,7 +13,7 @@ fn cell() *volatile u64 {
 }
 
 fn say(message: []const u8) void {
-    _ = jani_log(message.ptr, @intCast(message.len));
+    _ = jani.log(message);
 }
 
 fn emit(value: u64) void {
@@ -59,7 +49,7 @@ fn emit(value: u64) void {
     buffer[length] = '\n';
     length += 1;
 
-    _ = jani_log(&buffer, @intCast(length));
+    _ = jani.log(buffer[0..length]);
 }
 
 fn check(name: []const u8, ok: bool) void {
@@ -72,16 +62,16 @@ fn probe_objects() void {
     var written: [8]u8 = .{ 1, 2, 3, 4, 5, 6, 7, 8 };
     var read_back: [8]u8 = .{ 0, 0, 0, 0, 0, 0, 0, 0 };
 
-    const slot = jani_object_create(0, 7, PROBE_BYTES);
+    const slot = jani.object_create(0, 7, PROBE_BYTES);
     if (slot < 0) {
         check("object_create", false);
         return;
     }
     check("object_create", true);
 
-    check("object_size", jani_object_size(slot) == @as(i64, PROBE_BYTES));
-    check("object_write", jani_object_write(slot, 4, &written, 8) == 8);
-    check("object_read", jani_object_read(slot, 4, &read_back, 8) == 8);
+    check("object_size", jani.object_size(slot) == @as(i64, PROBE_BYTES));
+    check("object_write", jani.object_write(slot, 4, &written) == 8);
+    check("object_read", jani.object_read(slot, 4, &read_back) == 8);
 
     var matched = true;
     for (written, 0..) |value, index| {
@@ -91,12 +81,12 @@ fn probe_objects() void {
     }
     check("object round trip", matched);
 
-    check("object_read clamps", jani_object_read(slot, 60, &read_back, 8) == 4);
-    check("object_write bounds", jani_object_write(slot, 60, &written, 8) == JANI_ERANGE);
-    check("object_read past end", jani_object_read(slot, 0xFFFFFFFF, &read_back, 8) == JANI_ERANGE);
-    check("object_write past end", jani_object_write(slot, 0xFFFFFFFF, &written, 8) == JANI_ERANGE);
-    check("cap_drop", jani_cap_drop(slot) == 0);
-    check("dropped slot rejected", jani_object_size(slot) < 0);
+    check("object_read clamps", jani.object_read(slot, 60, &read_back) == 4);
+    check("object_write bounds", jani.object_write(slot, 60, &written) == JANI_ERANGE);
+    check("object_read past end", jani.object_read(slot, 0xFFFFFFFF, &read_back) == JANI_ERANGE);
+    check("object_write past end", jani.object_write(slot, 0xFFFFFFFF, &written) == JANI_ERANGE);
+    check("cap_drop", jani.cap_drop(slot) == 0);
+    check("dropped slot rejected", jani.object_size(slot) < 0);
 }
 
 fn probe_messages() void {
@@ -104,34 +94,34 @@ fn probe_messages() void {
     var received: [8]u8 = .{ 0, 0, 0, 0, 0, 0, 0, 0 };
     var capability: i32 = 0;
 
-    const me = jani_self();
+    const me = jani.self();
     check("self", me >= 0);
 
-    check("message_recv empty", jani_message_recv(&received, 8, &capability) < 0);
-    check("message_send", jani_message_send(me, payload.ptr, payload.len, -1) == 0);
+    check("message_recv empty", jani.message_recv(&received, &capability) < 0);
+    check("message_send", jani.message_send(me, payload, -1) == 0);
 
-    const got = jani_message_recv(&received, 8, &capability);
+    const got = jani.message_recv(&received, &capability);
     check("message_recv", got == 4);
     check("message payload", received[0] == 'p' and received[3] == 'g');
     check("message capability", capability == -1);
 }
 
 fn probe_timer() void {
-    const now: u64 = @intCast(jani_time_logical());
+    const now: u64 = @intCast(jani.time_logical());
     const headroom: u64 = ~now;
 
-    check("timer_set last deadline", jani_timer_set(headroom) == 0);
-    check("timer_set rejects overflow", jani_timer_set(headroom + 1) == JANI_EINVAL);
+    check("timer_set last deadline", jani.timer_set(headroom) == 0);
+    check("timer_set rejects overflow", jani.timer_set(headroom + 1) == JANI_EINVAL);
 }
 
 export fn jani_init() void {
     cell().* = 0;
 
-    check("time_logical", jani_time_logical() >= 0);
+    check("time_logical", jani.time_logical() >= 0);
     probe_objects();
     probe_messages();
 
-    _ = jani_timer_set(TICK_DELAY);
+    _ = jani.timer_set(TICK_DELAY);
 }
 
 export fn jani_on_timer() void {
@@ -142,7 +132,7 @@ export fn jani_on_timer() void {
         probe_timer();
     }
     emit(next);
-    _ = jani_timer_set(TICK_DELAY);
+    _ = jani.timer_set(TICK_DELAY);
 }
 
 export fn jani_on_message() void {}
