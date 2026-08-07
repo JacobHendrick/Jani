@@ -51,13 +51,15 @@ is planned; components previously assigned to Odin will be written in Zig.
 - `make fuzz-heap` — run the bounded randomized heap fuzz campaign
 - `make model-check` — prove the current WAL model satisfies its invariants
 - `make model-check-negative` — prove TLC breaks all seeded protocol mutants
+- `make zero-install-test` — install a component, then resume it from an ISO
+  that contains no Wasm module
 
 ## Status
 
 - [x] Phase 0 — bare-metal on-ramp (boot, print, interrupts)
 - [x] Phase 1 — memory & the single address space
-- [ ] Phase 2 — persistent object store
-- [ ] Phase 3 — WASM runtime as userspace  ← the "wow" demo lives here
+- [x] Phase 2 — persistent object store
+- [x] Phase 3 — WASM runtime as userspace  ← the "wow" demo lives here
 - [ ] Phase 4 — capabilities, scheduler, replay, hot-swap
 - [ ] Phase 5 — distribution
 - [ ] Phase 6 — semantic layer

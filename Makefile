@@ -19,12 +19,14 @@ WOW_SECONDS ?= 40
 
 BUILD_DIR := build
 ISO_ROOT := $(BUILD_DIR)/iso_root
+RESUME_ISO_ROOT := $(BUILD_DIR)/iso_resume_root
 ZIG_GLOBAL_CACHE_DIR := $(abspath $(BUILD_DIR)/zig-global-cache)
 ZIG_LOCAL_CACHE_DIR := $(abspath $(BUILD_DIR)/zig-local-cache)
 ZIG_ENV := env ZIG_GLOBAL_CACHE_DIR=$(ZIG_GLOBAL_CACHE_DIR) ZIG_LOCAL_CACHE_DIR=$(ZIG_LOCAL_CACHE_DIR)
 
 KERNEL_ELF := $(BUILD_DIR)/jani.elf
 ISO_IMAGE := $(BUILD_DIR)/jani.iso
+RESUME_ISO_IMAGE := $(BUILD_DIR)/jani-resume.iso
 START_OBJ := $(BUILD_DIR)/start.o
 MAIN_OBJ := $(BUILD_DIR)/main.o
 GDT_OBJ := $(BUILD_DIR)/gdt.o
@@ -95,6 +97,7 @@ SDK_ZIG := sdk/zig/jani.zig
 
 LINKER_SCRIPT := kernel/boot/linker.ld
 LIMINE_CONFIG := kernel/boot/limine.conf
+LIMINE_RESUME_CONFIG := kernel/boot/limine-resume.conf
 LIMINE_DIR := third_party/limine
 
 CFLAGS := -target x86_64-freestanding-none \
@@ -231,10 +234,11 @@ KERNEL_OBJECTS += $(WASM_SHIM_OBJECTS) $(WAMR_PLATFORM_OBJ) $(WAMR_OBJECTS) \
 	$(MODULE_VALIDATE_OBJ) $(SYSCALL_ARGS_OBJ) $(WASM_RUNTIME_OBJ) \
 	$(COMPONENT_OBJ) $(INSTANCE_STATE_OBJ) $(SYSCALLS_OBJ)
 
-.PHONY: all check-tools kernel iso run run-debug test fuzz-heap \
+.PHONY: all check-tools kernel iso resume-iso run run-debug test fuzz-heap \
 	fuzz-object-store fuzz-wasm-shim fuzz-wasm-module fuzz-syscall-args \
 	model-check model-check-negative \
-	write-ordering-negative crash-test wow-demo wow-demo-negative hello-wasm counter-wasm \
+write-ordering-negative crash-test wow-demo wow-demo-negative zero-install-test \
+hello-wasm counter-wasm \
 	verify-wamr clean \
 	idlc idl-generate idl-check idl-negative
 
@@ -436,6 +440,8 @@ kernel: $(KERNEL_ELF)
 
 iso: $(ISO_IMAGE)
 
+resume-iso: $(RESUME_ISO_IMAGE)
+
 $(ISO_IMAGE): $(KERNEL_ELF) $(LIMINE_CONFIG) $(COUNTER_WASM)
 	mkdir -p $(ISO_ROOT)/boot
 	mkdir -p $(ISO_ROOT)/boot/limine
@@ -459,6 +465,33 @@ $(ISO_IMAGE): $(KERNEL_ELF) $(LIMINE_CONFIG) $(COUNTER_WASM)
 		$(ISO_ROOT) \
 		-o $(ISO_IMAGE)
 	$(LIMINE_DIR)/limine bios-install $(ISO_IMAGE)
+
+# This ISO deliberately contains no Wasm module. It can only resume a component
+# that was installed into the persistent object store by an earlier boot.
+$(RESUME_ISO_IMAGE): $(KERNEL_ELF) $(LIMINE_RESUME_CONFIG)
+	rm -rf $(RESUME_ISO_ROOT)
+	mkdir -p $(RESUME_ISO_ROOT)/boot
+	mkdir -p $(RESUME_ISO_ROOT)/boot/limine
+	mkdir -p $(RESUME_ISO_ROOT)/EFI/BOOT
+	cp $(KERNEL_ELF) $(RESUME_ISO_ROOT)/boot/jani.elf
+	cp $(LIMINE_RESUME_CONFIG) $(RESUME_ISO_ROOT)/boot/limine.conf
+	cp $(LIMINE_DIR)/limine-bios.sys $(RESUME_ISO_ROOT)/boot/limine/
+	cp $(LIMINE_DIR)/limine-bios-cd.bin $(RESUME_ISO_ROOT)/boot/limine/
+	cp $(LIMINE_DIR)/limine-uefi-cd.bin $(RESUME_ISO_ROOT)/boot/limine/
+	cp $(LIMINE_DIR)/BOOTX64.EFI $(RESUME_ISO_ROOT)/EFI/BOOT/
+	test ! -e $(RESUME_ISO_ROOT)/boot/counter.wasm
+	$(XORRISO) -as mkisofs \
+		-b boot/limine/limine-bios-cd.bin \
+		-no-emul-boot \
+		-boot-load-size 4 \
+		-boot-info-table \
+		--efi-boot boot/limine/limine-uefi-cd.bin \
+		-efi-boot-part \
+		--efi-boot-image \
+		--protective-msdos-label \
+		$(RESUME_ISO_ROOT) \
+		-o $(RESUME_ISO_IMAGE)
+	$(LIMINE_DIR)/limine bios-install $(RESUME_ISO_IMAGE)
 
 test: $(TEST_PMM_BIN) $(TEST_HEAP_BIN) $(TEST_OBJECT_TABLE_BIN) $(TEST_OBJECT_HEADER_BIN) $(TEST_WAL_BIN) $(TEST_OBJECT_STORE_BIN) $(TEST_WRITE_ORDERING_BIN) $(TEST_WASM_SHIM_BIN) $(TEST_WASM_MODULE_BIN) $(TEST_SYSCALL_ARGS_BIN) $(TEST_COMPONENT_STATE_BIN) $(TEST_COMPONENT_MAILBOX_BIN) $(TEST_IDLC_BIN) $(TEST_DETERMINISM_BIN)
 	$(TEST_PMM_BIN)
@@ -688,6 +721,9 @@ crash-test: $(ISO_IMAGE)
 
 wow-demo: $(ISO_IMAGE)
 	tools/wow_demo_qemu.sh $(WOW_CYCLES) $(WOW_SECONDS)
+
+zero-install-test: $(ISO_IMAGE) $(RESUME_ISO_IMAGE)
+	tools/zero_install_qemu.sh $(WOW_SECONDS)
 
 # Proves the gate above can fail. Each seed breaks resume in a different way;
 # the gate must reject every one of them. A gate nobody has seen fail is not

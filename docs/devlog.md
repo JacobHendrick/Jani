@@ -754,8 +754,6 @@ Gates: `make test` 8,778 checks across fourteen binaries, `make kernel` links,
 `make idl-check` matches, `make idl-negative` 3/3, `make wow-demo` 3/3 cycles
 with 20/20 syscall assertions.
 
-<!-- Next entry goes here -->
-
 ## 2026-08-07 — Installed components boot without their original module
 
 `run_component_demo()` now checks the persistent component registry before it
@@ -767,5 +765,22 @@ dependency on keeping the installation artifact in every later ISO.
 Gates: `make kernel` links, `git diff --check` is clean, and `make wow-demo`
 passes 3/3 power cycles with the counter continuing from 1 through 104 while
 `jani_init` runs only on the first boot.
+
+## 2026-08-07 (later) — Zero-install is a tested artifact, not an assumption
+
+Added a second boot image, `build/jani-resume.iso`, whose Limine configuration
+declares no modules and whose ISO root contains no `counter.wasm`. The new
+`make zero-install-test` gate installs the counter from the normal ISO, powers
+QEMU off, then boots the same disk from the module-free ISO. The counter resumed
+from 37 after ending at 36, proving WAMR instantiated the saved module object
+directly from the store.
+
+Phase 3 is now complete: interpreter, persistent component state, generated
+IDL contracts and SDKs, capability-shaped syscalls, deterministic resume, and
+zero-install all have executable gates.
+
+Gates: `make test` passes 8,778 checks, `make idl-check` matches, `make
+resume-iso` builds a module-free image, `sh -n` accepts the test script, `git
+diff --check` is clean, and `make zero-install-test` passes.
 
 <!-- Next entry goes here -->
