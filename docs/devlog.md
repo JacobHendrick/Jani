@@ -755,3 +755,17 @@ Gates: `make test` 8,778 checks across fourteen binaries, `make kernel` links,
 with 20/20 syscall assertions.
 
 <!-- Next entry goes here -->
+
+## 2026-08-07 — Installed components boot without their original module
+
+`run_component_demo()` now checks the persistent component registry before it
+looks at Limine's boot modules. A saved component resumes entirely from the
+object store; the bundled Wasm file is required only when no component has been
+installed yet. This is the first zero-install boot step and removes an accidental
+dependency on keeping the installation artifact in every later ISO.
+
+Gates: `make kernel` links, `git diff --check` is clean, and `make wow-demo`
+passes 3/3 power cycles with the counter continuing from 1 through 104 while
+`jani_init` runs only on the first boot.
+
+<!-- Next entry goes here -->

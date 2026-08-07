@@ -545,38 +545,20 @@ static int run_component_leak_test(
 
 static int run_component_demo(void) {
     struct object_id roots[COMPONENT_MAX];
-    const uint8_t *module_bytes;
-    size_t module_length;
     uint64_t sequence;
     size_t count;
-    uint32_t section_count;
-
-    if ((module_request.response == 0)
-        || (module_request.response->module_count == 0)) {
-        kputs("ERROR: no wasm module supplied by the bootloader\n");
-        return 0;
-    }
-
-    module_bytes = (const uint8_t *)module_request.response->modules[0]->address;
-    module_length = (size_t)module_request.response->modules[0]->size;
-
-    section_count = 0;
-    if (!jani_wasm_module_validate(module_bytes, module_length,
-                                   &section_count)) {
-        kputs("ERROR: wasm module failed pre-validation\n");
-        return 0;
-    }
 
     if (!jani_wasm_runtime_start()) {
         return 0;
     }
 
-    if (!run_component_leak_test(module_bytes, module_length)) {
-        return 0;
-    }
-
-    if (component_registry_load(&demo_store, roots, COMPONENT_MAX, &count,
-                                &sequence) && (count > 0)) {
+    if (component_registry_load(
+            &demo_store,
+            roots,
+            COMPONENT_MAX,
+            &count,
+            &sequence
+        ) && (count > 0)) {
         printk("store: registry found (%d component)\n", (int)count);
 
         if (!component_resume(&demo_store, roots[0], &demo_component)) {
@@ -584,28 +566,71 @@ static int run_component_demo(void) {
             return 0;
         }
 
-        printk("component: resumed at logical time %d\n",
-               (int)demo_component.logical_time);
+        printk(
+            "component: resumed at logical time %d\n",
+            (int)demo_component.logical_time
+        );
 
 #if JANI_WOW_BUG == JANI_WOW_BUG_INIT_ON_RESUME
-        (void)jani_wasm_instance_call(demo_component.instance,
-                                      demo_component.exec_env, "jani_init");
+        (void)jani_wasm_instance_call(
+            demo_component.instance,
+            demo_component.exec_env,
+            "jani_init"
+        );
 #elif JANI_WOW_BUG == JANI_WOW_BUG_LOSE_MEMORY
         {
             uint8_t *memory;
             size_t memory_size;
 
-            if (jani_wasm_instance_memory(demo_component.instance, &memory,
-                                          &memory_size)) {
+            if (jani_wasm_instance_memory(
+                    demo_component.instance,
+                    &memory,
+                    &memory_size
+                )) {
                 memset(memory, 0, memory_size);
             }
         }
 #endif
     } else {
-        kputs("store: registry absent, formatting\n");
+        const uint8_t *module_bytes;
+        size_t module_length;
+        uint32_t section_count;
 
-        if (!component_install(&demo_store, module_bytes, module_length,
-                               &demo_component)) {
+        if ((module_request.response == NULL) ||
+            (module_request.response->module_count == 0)) {
+            kputs(
+                "ERROR: no component is installed and no module was supplied\n"
+            );
+            return 0;
+        }
+
+        module_bytes =
+            (const uint8_t *)module_request.response->modules[0]->address;
+        module_length =
+            (size_t)module_request.response->modules[0]->size;
+
+        section_count = 0;
+        if (!jani_wasm_module_validate(
+                module_bytes,
+                module_length,
+                &section_count
+            )) {
+            kputs("ERROR: wasm module failed pre-validation\n");
+            return 0;
+        }
+
+        if (!run_component_leak_test(module_bytes, module_length)) {
+            return 0;
+        }
+
+        kputs("store: no component installed\n");
+
+        if (!component_install(
+                &demo_store,
+                module_bytes,
+                module_length,
+                &demo_component
+            )) {
             kputs("ERROR: component install failed\n");
             return 0;
         }
