@@ -783,4 +783,46 @@ Gates: `make test` passes 8,778 checks, `make idl-check` matches, `make
 resume-iso` builds a module-free image, `sh -n` accepts the test script, `git
 diff --check` is clean, and `make zero-install-test` passes.
 
+## 2026-08-07 (Phase 4) — Capability rules begin as a pure module
+
+Added the first independent capability-engine module. A capability is a fixed
+24-byte object ID, rights mask, and badge. Validation rejects null pointers,
+zero object IDs, empty rights, and unknown permission bits. Permission checks
+require every requested bit, and derivation can only attenuate a parent that
+already owns `GRANT`; it cannot invent access the parent lacks.
+
+The module is linked into the freestanding kernel and has a hosted sanitizer
+test covering validation, combined rights, denied rights, badge assignment,
+parent preservation, and failed amplification attempts.
+
+Gates: `make kernel` links and `make test` passes 8,803 checks, including 25
+new capability checks under ASan/UBSan.
+
+## 2026-08-08 — Phase 3 closes its missing uninstall path
+
+The Phase 3 checkbox was premature: install, resume, and zero-install were
+proven, but the blueprint also defines uninstall as deleting the module object.
+There was no object-store delete operation and no component uninstall API.
+
+`object_store_delete()` now removes an object through the same copy-on-write
+table-generation and WAL root-swap protocol as writes. It handles an empty final
+table, evicts stale cache entries, survives remount, recovers an interrupted
+commit, and preserves deleted objects in older snapshots. `component_uninstall()`
+removes the component from the registry before deleting its module, so a power
+loss cannot leave boot pointing at a missing module. Root, state, capability
+table, and data objects remain available for provenance and snapshot history.
+
+The crash-test harness also had a stale timing assumption: all 25 cuts landed
+before virtio initialized, so it was testing boot speed instead of recovery. It
+now waits for the first workload marker, cuts at a randomized point after that,
+and fails immediately if no write round was interrupted.
+
+Gates: `make test` passes 8,882 checks, `make kernel` links, `make idl-check`
+matches, `make idl-negative` rejects 3/3 defects, `make wow-demo` survives 3/3
+power cycles, `make zero-install-test` resumes without `counter.wasm`, `make
+crash-test` recovers after 25/25 workload cuts, and `make
+write-ordering-negative` still exposes both seeded durability failures.
+
+Phase 3 is now complete against every item in its blueprint section.
+
 <!-- Next entry goes here -->

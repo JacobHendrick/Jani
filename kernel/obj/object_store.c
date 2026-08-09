@@ -613,9 +613,12 @@ static int recover_wal(struct object_store *store, int *recovered) {
 
     if (!object_wal_validate((const uint8_t *)&record, sizeof(record)) ||
         (record.table_count > store->table_capacity) ||
-        (record.table_sector < OBJECT_STORE_FIRST_ALLOCATABLE_SECTOR) ||
-        (record.table_sector > store->next_sector) ||
-        (record.table_count > (store->next_sector - record.table_sector))) {
+        ((record.table_count == 0) && (record.table_sector != 0)) ||
+        ((record.table_count != 0) &&
+         ((record.table_sector < OBJECT_STORE_FIRST_ALLOCATABLE_SECTOR) ||
+          (record.table_sector > store->next_sector) ||
+          (record.table_count >
+           (store->next_sector - record.table_sector))))) {
         return 0;
     }
 
@@ -1017,6 +1020,80 @@ int object_store_get(
     return 1;
 }
 
+int object_store_delete(
+    struct object_store *store,
+    struct object_id id
+) {
+    struct object_table candidate;
+    const struct object_table_entry *existing;
+    uint64_t table_sector;
+    uint64_t generation;
+    size_t index;
+
+    if ((store == NULL) || object_id_is_zero(id) ||
+        (store->current_generation == UINT64_MAX)) {
+        return 0;
+    }
+
+    existing = object_table_find(&store->table, id);
+    if (existing == NULL) {
+        return 0;
+    }
+
+    object_table_init(&candidate, store->scratch_entries,
+                      store->table_capacity);
+    memcpy(candidate.entries, store->table.entries,
+           store->table.count * sizeof(*candidate.entries));
+    candidate.count = store->table.count;
+
+    if (!object_table_remove(&candidate, id)) {
+        return 0;
+    }
+
+    table_sector = 0;
+    if ((candidate.count != 0) &&
+        !bitmap_allocate(store, candidate.count, &table_sector)) {
+        return 0;
+    }
+
+    if ((candidate.count != 0) &&
+        ((table_sector + candidate.count) > store->next_sector)) {
+        store->next_sector = table_sector + candidate.count;
+    }
+
+    if (!write_superblock(store) ||
+        ((candidate.count != 0) &&
+         !write_table_generation(store, &candidate, table_sector))) {
+        if (candidate.count != 0) {
+            bitmap_clear_range(store, table_sector, candidate.count);
+        }
+        return 0;
+    }
+
+    generation = store->current_generation + 1;
+    if (!write_wal_root(store, table_sector, candidate.count, generation)) {
+        return 0;
+    }
+
+    memcpy(store->table.entries, candidate.entries,
+           candidate.count * sizeof(*candidate.entries));
+    store->table.count = candidate.count;
+    store->current_table_sector = table_sector;
+    store->current_generation = generation;
+    if (!write_superblock(store) || !clear_wal(store)) {
+        return 0;
+    }
+
+    for (index = 0; index < store->cache_slot_count; index++) {
+        if (object_id_equal(store->cache_slots[index].id, id)) {
+            cache_remove_slot(store, index);
+            break;
+        }
+    }
+
+    return 1;
+}
+
 int object_store_snapshot_create(
     struct object_store *store,
     uint64_t *snapshot_id_out
@@ -1207,5 +1284,4 @@ int object_store_snapshot_prune(struct object_store *store, size_t keep) {
 
     return object_store_collect(store);
 }
-
 

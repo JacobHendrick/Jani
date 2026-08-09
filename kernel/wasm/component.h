@@ -196,6 +196,11 @@ int component_resume(
     struct component *component_out
 );
 
+int component_uninstall(
+    struct object_store *store,
+    struct object_id root_id
+);
+
 int component_commit(
     struct object_store *store,
     struct component *component

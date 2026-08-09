@@ -651,6 +651,52 @@ int component_resume(
     return 1;
 }
 
+int component_uninstall(
+    struct object_store *store,
+    struct object_id root_id
+) {
+    struct object_id roots[COMPONENT_MAX];
+    struct component component;
+    uint64_t sequence;
+    size_t count;
+    size_t index;
+
+    if ((store == NULL) || object_id_is_zero(root_id)) {
+        return 0;
+    }
+
+    if (!component_registry_load(store, roots, COMPONENT_MAX, &count,
+                                 &sequence)) {
+        return 0;
+    }
+
+    for (index = 0; index < count; index++) {
+        if (object_id_equal(roots[index], root_id)) {
+            break;
+        }
+    }
+    if (index == count) {
+        return 0;
+    }
+
+    memset(&component, 0, sizeof(component));
+    if (!component_root_read(store, root_id, &component)) {
+        return 0;
+    }
+
+    while ((index + 1) < count) {
+        roots[index] = roots[index + 1];
+        index++;
+    }
+    count--;
+
+    if (!component_registry_store(store, roots, count, sequence)) {
+        return 0;
+    }
+
+    return object_store_delete(store, component.module_id);
+}
+
 int component_invoke_timer(struct component *component) {
     if ((component == NULL) || (component->instance == NULL)) {
         return 0;

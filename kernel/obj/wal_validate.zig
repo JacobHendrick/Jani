@@ -67,8 +67,11 @@ pub export fn object_wal_validate(
         return 0;
     }
 
-    if ((read_u64_le(record, 16) == 0) or
-        (read_u64_le(record, 24) == 0) or
+    const table_sector = read_u64_le(record, 16);
+    const table_count = read_u64_le(record, 24);
+
+    if (((table_count == 0) and (table_sector != 0)) or
+        ((table_count != 0) and (table_sector == 0)) or
         (read_u64_le(record, 32) == 0)) {
         return 0;
     }

@@ -35,4 +35,9 @@ int object_table_upsert(
     struct object_table_entry entry
 );
 
+int object_table_remove(
+    struct object_table *table,
+    struct object_id id
+);
+
 #endif

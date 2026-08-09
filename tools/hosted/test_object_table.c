@@ -106,10 +106,44 @@ static void test_invalid_entries_and_full_table(void) {
     CHECK(table.count == 1);
 }
 
+static void test_remove_preserves_sorted_order(void) {
+    struct object_table_entry storage[3];
+    struct object_table table;
+    struct object_table_entry first;
+    struct object_table_entry second;
+    struct object_table_entry third;
+
+    first = make_entry(4, 10, 1, 10, 1);
+    second = make_entry(4, 20, 1, 20, 1);
+    third = make_entry(4, 30, 1, 30, 1);
+
+    object_table_init(&table, storage, 3);
+    CHECK(object_table_upsert(&table, third));
+    CHECK(object_table_upsert(&table, first));
+    CHECK(object_table_upsert(&table, second));
+
+    CHECK(object_table_remove(&table, second.id));
+    CHECK(table.count == 2);
+    CHECK(object_id_equal(table.entries[0].id, first.id));
+    CHECK(object_id_equal(table.entries[1].id, third.id));
+    CHECK(object_id_is_zero(table.entries[2].id));
+
+    CHECK(object_table_remove(&table, first.id));
+    CHECK(table.count == 1);
+    CHECK(object_id_equal(table.entries[0].id, third.id));
+
+    CHECK(object_table_remove(&table, third.id));
+    CHECK(table.count == 0);
+    CHECK(!object_table_remove(&table, third.id));
+    CHECK(!object_table_remove(&table, (struct object_id){ 0, 0 }));
+    CHECK(!object_table_remove(NULL, third.id));
+}
+
 int main(void) {
     test_insert_sort_and_find();
     test_newer_version_replaces_old_version();
     test_invalid_entries_and_full_table();
+    test_remove_preserves_sorted_order();
 
     printf("test_object_table: %lu checks passed\n", checks_passed);
     return 0;

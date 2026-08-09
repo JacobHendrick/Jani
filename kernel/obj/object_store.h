@@ -105,6 +105,11 @@ int object_store_get(
     size_t *payload_size_out
 );
 
+int object_store_delete(
+    struct object_store *store,
+    struct object_id id
+);
+
 int object_store_snapshot_create(
     struct object_store *store,
     uint64_t *snapshot_id_out

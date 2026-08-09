@@ -37,6 +37,24 @@ int main(void) {
     make_valid_record(&record);
     CHECK(!object_wal_validate((const uint8_t *)&record, sizeof(record) - 1));
 
+    make_valid_record(&record);
+    record.table_sector = 0;
+    record.table_count = 0;
+    record.checksum = 0;
+    record.checksum = object_crc32c((const uint8_t *)&record, sizeof(record));
+    CHECK(object_wal_validate((const uint8_t *)&record, sizeof(record)));
+
+    record.table_sector = 10;
+    record.checksum = 0;
+    record.checksum = object_crc32c((const uint8_t *)&record, sizeof(record));
+    CHECK(!object_wal_validate((const uint8_t *)&record, sizeof(record)));
+
+    record.table_sector = 0;
+    record.table_count = 1;
+    record.checksum = 0;
+    record.checksum = object_crc32c((const uint8_t *)&record, sizeof(record));
+    CHECK(!object_wal_validate((const uint8_t *)&record, sizeof(record)));
+
     printf("test_wal: %lu checks passed\n", checks_passed);
     return 0;
 }

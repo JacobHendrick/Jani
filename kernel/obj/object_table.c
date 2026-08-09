@@ -124,3 +124,51 @@ int object_table_upsert(
 
     return 1;
 }
+
+int object_table_remove(
+    struct object_table *table,
+    struct object_id id
+) {
+    size_t left;
+    size_t right;
+    size_t position;
+
+    if ((table == NULL) ||
+        (table->entries == NULL) ||
+        (table->count > table->capacity) ||
+        object_id_is_zero(id)) {
+        return 0;
+    }
+
+    left = 0;
+    right = table->count;
+
+    while (left < right) {
+        size_t middle;
+        int comparison;
+
+        middle = left + ((right - left) / 2);
+        comparison = object_id_compare(table->entries[middle].id, id);
+
+        if (comparison < 0) {
+            left = middle + 1;
+        } else {
+            right = middle;
+        }
+    }
+
+    position = left;
+    if ((position == table->count) ||
+        !object_id_equal(table->entries[position].id, id)) {
+        return 0;
+    }
+
+    while ((position + 1) < table->count) {
+        table->entries[position] = table->entries[position + 1];
+        position++;
+    }
+
+    table->count--;
+    table->entries[table->count] = (struct object_table_entry){ 0 };
+    return 1;
+}

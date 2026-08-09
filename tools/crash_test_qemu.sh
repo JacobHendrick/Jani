@@ -75,7 +75,20 @@ boot_once() {
     local pid=$!
 
     if [ -n "$kill_after" ]; then
-        sleep "$kill_after"
+        while [ "$waited" -lt 600 ]; do
+            if grep -q "workload round" "$LOG" 2>/dev/null; then
+                break
+            fi
+            if grep -q "RECOVERY FAILED\|ERROR:" "$LOG" 2>/dev/null; then
+                break
+            fi
+            sleep 0.1
+            waited=$((waited + 1))
+        done
+
+        if grep -q "workload round" "$LOG" 2>/dev/null; then
+            sleep "$kill_after"
+        fi
     else
         while [ "$waited" -lt 600 ]; do
             if grep -qE "$VERDICT_PATTERN" "$LOG" 2>/dev/null; then
@@ -107,8 +120,8 @@ echo "crash test: $CYCLES cycles against a ${DISK_MIB} MiB virtio-blk disk (cach
 writes_seen=0
 
 for cycle in $(seq 1 "$CYCLES"); do
-    # Random kill point in the window where the workload is running.
-    delay="$(awk -v seed="$cycle$$" 'BEGIN{srand(seed);printf "%.2f", 0.6+rand()*2.4}')"
+    # Wait for the first workload marker, then choose a random cut inside it.
+    delay="$(awk -v seed="$cycle$$" 'BEGIN{srand(seed);printf "%.2f", 0.05+rand()*0.95}')"
 
     boot_once "$delay"
 
@@ -117,6 +130,9 @@ for cycle in $(seq 1 "$CYCLES"); do
     fi
 
     rounds="$(grep -c "workload round" "$LOG" || true)"
+    if [ "$rounds" -eq 0 ]; then
+        fail "$cycle" "the write workload never started"
+    fi
     writes_seen=$((writes_seen + rounds))
 
     if grep -q "RECOVERY OK" "$LOG"; then
@@ -129,7 +145,7 @@ for cycle in $(seq 1 "$CYCLES"); do
         state="killed before virtio came up"
     fi
 
-    printf "  cycle %2d  kill@%-5ss  %-26s rounds=%s\n" \
+    printf "  cycle %2d  cut+%-5ss   %-26s rounds=%s\n" \
         "$cycle" "$delay" "$state" "$rounds"
 done
 

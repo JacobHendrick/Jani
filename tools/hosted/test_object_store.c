@@ -1041,6 +1041,138 @@ static void test_cache_evicts_when_slots_run_out(void) {
     }
 }
 
+static void test_delete_survives_remount_and_snapshot_rollback(void) {
+    struct hosted_disk disk;
+    struct object_store store;
+    struct object_store remounted;
+    struct object_table_entry entries[TABLE_CAPACITY];
+    struct object_table_entry scratch[TABLE_CAPACITY];
+    struct object_table_entry remounted_entries[TABLE_CAPACITY];
+    struct object_table_entry remounted_scratch[TABLE_CAPACITY];
+    _Alignas(16) uint8_t cache[CACHE_BYTES];
+    uint8_t bitmap[BITMAP_BYTES];
+    _Alignas(16) uint8_t arena[ARENA_BYTES];
+    _Alignas(16) uint8_t remounted_cache[CACHE_BYTES];
+    uint8_t remounted_bitmap[BITMAP_BYTES];
+    _Alignas(16) uint8_t remounted_arena[ARENA_BYTES];
+    struct object_header header;
+    const uint8_t *stored;
+    size_t stored_size;
+    struct object_id keep_id;
+    struct object_id delete_id;
+    struct object_id type_id;
+    const uint8_t keep_payload[] = { 1, 2 };
+    const uint8_t delete_payload[] = { 3, 4, 5 };
+    uint64_t snapshot;
+
+    memset(&disk, 0, sizeof(disk));
+    disk.writes_allowed = ULONG_MAX;
+    keep_id = make_id(40, 1);
+    delete_id = make_id(40, 2);
+    type_id = make_id(41, 1);
+
+    CHECK(object_store_format(&store, make_io(&disk), entries, scratch,
+                              TABLE_CAPACITY, cache, sizeof(cache), bitmap,
+                              sizeof(bitmap), arena, sizeof(arena)));
+    CHECK(object_store_put(&store, keep_id, type_id, make_id(3, 1),
+                           make_id(3, 1), 1, keep_payload,
+                           sizeof(keep_payload)));
+    CHECK(object_store_put(&store, delete_id, type_id, make_id(3, 1),
+                           make_id(3, 1), 2, delete_payload,
+                           sizeof(delete_payload)));
+    CHECK(object_store_snapshot_create(&store, &snapshot));
+
+    CHECK(object_store_get(&store, delete_id, &header, &stored,
+                           &stored_size));
+    CHECK(object_store_delete(&store, delete_id));
+    CHECK(store.table.count == 1);
+    CHECK(!object_store_get(&store, delete_id, &header, &stored,
+                            &stored_size));
+    CHECK(object_store_get(&store, keep_id, &header, &stored, &stored_size));
+    CHECK(bytes_equal(stored, keep_payload, sizeof(keep_payload)));
+    CHECK(!object_store_delete(&store, delete_id));
+    CHECK(!object_store_delete(&store, make_id(0, 0)));
+    CHECK(!object_store_delete(NULL, keep_id));
+
+    CHECK(object_store_mount(&remounted, make_io(&disk), remounted_entries,
+                             remounted_scratch, TABLE_CAPACITY,
+                             remounted_cache, sizeof(remounted_cache),
+                             remounted_bitmap, sizeof(remounted_bitmap),
+                             remounted_arena, sizeof(remounted_arena)));
+    CHECK(remounted.table.count == 1);
+    CHECK(!object_store_get(&remounted, delete_id, &header, &stored,
+                            &stored_size));
+
+    CHECK(object_store_snapshot_rollback(&remounted, snapshot));
+    CHECK(remounted.table.count == 2);
+    CHECK(object_store_get(&remounted, delete_id, &header, &stored,
+                           &stored_size));
+    CHECK(stored_size == sizeof(delete_payload));
+    CHECK(bytes_equal(stored, delete_payload, sizeof(delete_payload)));
+}
+
+static void test_delete_last_object_and_recover_wal(void) {
+    struct hosted_disk disk;
+    struct object_store store;
+    struct object_store recovered;
+    struct object_table_entry entries[TABLE_CAPACITY];
+    struct object_table_entry scratch[TABLE_CAPACITY];
+    struct object_table_entry recovered_entries[TABLE_CAPACITY];
+    struct object_table_entry recovered_scratch[TABLE_CAPACITY];
+    _Alignas(16) uint8_t cache[CACHE_BYTES];
+    uint8_t bitmap[BITMAP_BYTES];
+    _Alignas(16) uint8_t arena[ARENA_BYTES];
+    _Alignas(16) uint8_t recovered_cache[CACHE_BYTES];
+    uint8_t recovered_bitmap[BITMAP_BYTES];
+    _Alignas(16) uint8_t recovered_arena[ARENA_BYTES];
+    struct object_header header;
+    const uint8_t *stored;
+    size_t stored_size;
+    struct object_id first_id;
+    struct object_id second_id;
+    struct object_id type_id;
+    const uint8_t payload[] = { 8, 9 };
+
+    memset(&disk, 0, sizeof(disk));
+    disk.writes_allowed = ULONG_MAX;
+    first_id = make_id(50, 1);
+    second_id = make_id(50, 2);
+    type_id = make_id(51, 1);
+
+    CHECK(object_store_format(&store, make_io(&disk), entries, scratch,
+                              TABLE_CAPACITY, cache, sizeof(cache), bitmap,
+                              sizeof(bitmap), arena, sizeof(arena)));
+    CHECK(object_store_put(&store, first_id, type_id, make_id(3, 1),
+                           make_id(3, 1), 1, payload, sizeof(payload)));
+    CHECK(object_store_put(&store, second_id, type_id, make_id(3, 1),
+                           make_id(3, 1), 2, payload, sizeof(payload)));
+
+    disk.writes_allowed = 3;
+    CHECK(!object_store_delete(&store, second_id));
+    CHECK(disk.writes_allowed == 0);
+
+    disk.writes_allowed = ULONG_MAX;
+    CHECK(object_store_mount(&recovered, make_io(&disk), recovered_entries,
+                             recovered_scratch, TABLE_CAPACITY,
+                             recovered_cache, sizeof(recovered_cache),
+                             recovered_bitmap, sizeof(recovered_bitmap),
+                             recovered_arena, sizeof(recovered_arena)));
+    CHECK(recovered.table.count == 1);
+    CHECK(object_table_find(&recovered.table, first_id) != NULL);
+    CHECK(object_table_find(&recovered.table, second_id) == NULL);
+
+    CHECK(object_store_delete(&recovered, first_id));
+    CHECK(recovered.table.count == 0);
+    CHECK(recovered.current_table_sector == 0);
+
+    CHECK(object_store_mount(&store, make_io(&disk), entries, scratch,
+                             TABLE_CAPACITY, cache, sizeof(cache), bitmap,
+                             sizeof(bitmap), arena, sizeof(arena)));
+    CHECK(store.table.count == 0);
+    CHECK(!object_store_get(&store, first_id, &header, &stored,
+                            &stored_size));
+}
+
 int main(void) {
     test_commit_and_remount();
     test_crash_after_wal_recovers();
@@ -1055,6 +1187,8 @@ int main(void) {
     test_cache_evicts_least_recently_used();
     test_cache_compaction_survives_eviction_cycles();
     test_cache_evicts_when_slots_run_out();
+    test_delete_survives_remount_and_snapshot_rollback();
+    test_delete_last_object_and_recover_wal();
     printf("test_object_store: %lu checks passed\n", checks_passed);
     return 0;
 }
