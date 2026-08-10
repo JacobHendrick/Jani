@@ -21,7 +21,8 @@
 #define COMPONENT_DATA_ID_HIGH UINT64_C(3)
 
 #define COMPONENT_CAPTABLE_MAGIC UINT64_C(0x4A414E495F434150)
-#define COMPONENT_CAPTABLE_FORMAT_VERSION UINT32_C(1)
+#define COMPONENT_CAPTABLE_FORMAT_VERSION_V1 UINT32_C(1)
+#define COMPONENT_CAPTABLE_FORMAT_VERSION UINT32_C(2)
 #define COMPONENT_CAPTABLE_HEADER_SIZE 32u
 
 #define JANI_EINVAL (-1)
@@ -33,6 +34,7 @@
 
 #define COMPONENT_MAX 4u
 #define COMPONENT_CAP_SLOTS 16u
+#define COMPONENT_CAP_PARENT_NONE UINT32_MAX
 #define COMPONENT_MAILBOX_BYTES 512u
 
 #define COMPONENT_RIGHTS_READ UINT32_C(0x1)
@@ -114,6 +116,7 @@ struct component {
     uint8_t mailbox[COMPONENT_MAILBOX_BYTES];
 
     struct component_capability capabilities[COMPONENT_CAP_SLOTS];
+    uint32_t capability_parents[COMPONENT_CAP_SLOTS];
     uint32_t capability_count;
     uint64_t next_object_sequence;
     uint32_t capabilities_dirty;

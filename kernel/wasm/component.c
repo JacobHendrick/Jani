@@ -81,6 +81,7 @@ int component_capability_insert(
     component->capabilities[slot].object = object;
     component->capabilities[slot].rights = rights;
     component->capabilities[slot].badge = badge;
+    component->capability_parents[slot] = COMPONENT_CAP_PARENT_NONE;
     component->capabilities_dirty = 1;
 
     *slot_out = slot;
@@ -91,9 +92,77 @@ static struct object_id component_sequence_id(uint64_t sequence) {
     return component_make_id(COMPONENT_SEQUENCE_ID_HIGH, sequence);
 }
 
-#define CAPTABLE_PAYLOAD_BYTES \
+#define CAPTABLE_CAPABILITIES_BYTES \
+    (COMPONENT_CAP_SLOTS * sizeof(struct component_capability))
+#define CAPTABLE_PARENTS_BYTES \
+    (COMPONENT_CAP_SLOTS * sizeof(uint32_t))
+#define CAPTABLE_V1_PAYLOAD_BYTES \
     (COMPONENT_CAPTABLE_HEADER_SIZE + \
-     (COMPONENT_CAP_SLOTS * sizeof(struct component_capability)))
+     CAPTABLE_CAPABILITIES_BYTES)
+#define CAPTABLE_PAYLOAD_BYTES \
+    (CAPTABLE_V1_PAYLOAD_BYTES + CAPTABLE_PARENTS_BYTES)
+
+static void component_capability_parents_clear(struct component *component) {
+    uint32_t slot;
+
+    for (slot = 0; slot < COMPONENT_CAP_SLOTS; slot++) {
+        component->capability_parents[slot] = COMPONENT_CAP_PARENT_NONE;
+    }
+}
+
+static int component_capability_parents_valid(
+    const struct component *component,
+    uint32_t slot_count
+) {
+    uint32_t slot;
+
+    for (slot = 0; slot < COMPONENT_CAP_SLOTS; slot++) {
+        uint32_t current;
+        uint32_t depth;
+
+        if ((slot >= slot_count) &&
+            !object_id_is_zero(component->capabilities[slot].object)) {
+            return 0;
+        }
+
+        if (object_id_is_zero(component->capabilities[slot].object)) {
+            if (component->capability_parents[slot] !=
+                COMPONENT_CAP_PARENT_NONE) {
+                return 0;
+            }
+            continue;
+        }
+
+        current = slot;
+        for (depth = 0; depth < COMPONENT_CAP_SLOTS; depth++) {
+            uint32_t parent = component->capability_parents[current];
+
+            if (parent == COMPONENT_CAP_PARENT_NONE) {
+                break;
+            }
+            if ((parent >= slot_count) ||
+                object_id_is_zero(component->capabilities[parent].object)) {
+                return 0;
+            }
+            if (!object_id_equal(component->capabilities[current].object,
+                                 component->capabilities[parent].object) ||
+                ((component->capabilities[parent].rights &
+                  COMPONENT_RIGHTS_GRANT) == 0) ||
+                ((component->capabilities[current].rights &
+                  component->capabilities[parent].rights) !=
+                 component->capabilities[current].rights)) {
+                return 0;
+            }
+            current = parent;
+        }
+
+        if (depth == COMPONENT_CAP_SLOTS) {
+            return 0;
+        }
+    }
+
+    return 1;
+}
 
 int component_captable_write(
     struct object_store *store,
@@ -105,10 +174,26 @@ int component_captable_write(
     if ((store == NULL) || (component == NULL)) {
         return 0;
     }
+    if ((component->capability_count > COMPONENT_CAP_SLOTS) ||
+        !component_capability_parents_valid(
+            component, component->capability_count
+        )) {
+        return 0;
+    }
 
     memset(buffer, 0, sizeof(buffer));
     memcpy(buffer + COMPONENT_CAPTABLE_HEADER_SIZE, component->capabilities,
            sizeof(component->capabilities));
+    for (uint32_t slot = 0; slot < COMPONENT_CAP_SLOTS; slot++) {
+        uint32_t parent = component->capability_parents[slot];
+
+        if (object_id_is_zero(component->capabilities[slot].object)) {
+            parent = COMPONENT_CAP_PARENT_NONE;
+        }
+        memcpy(buffer + CAPTABLE_V1_PAYLOAD_BYTES +
+                   (slot * sizeof(parent)),
+               &parent, sizeof(parent));
+    }
 
     memset(&captable, 0, sizeof(captable));
     captable.magic = COMPONENT_CAPTABLE_MAGIC;
@@ -117,7 +202,7 @@ int component_captable_write(
     captable.next_object_sequence = component->next_object_sequence;
     captable.payload_crc32c = object_crc32c(
         buffer + COMPONENT_CAPTABLE_HEADER_SIZE,
-        sizeof(component->capabilities)
+        CAPTABLE_CAPABILITIES_BYTES + CAPTABLE_PARENTS_BYTES
     );
 
     memcpy(buffer, &captable, COMPONENT_CAPTABLE_HEADER_SIZE);
@@ -141,6 +226,7 @@ int component_captable_read(
     struct object_header header;
     const uint8_t *payload;
     size_t payload_size;
+    size_t table_bytes;
 
     if ((store == NULL) || (component == NULL)) {
         return 0;
@@ -151,27 +237,51 @@ int component_captable_read(
         return 0;
     }
 
-    if (payload_size != CAPTABLE_PAYLOAD_BYTES) {
+    if (payload_size < COMPONENT_CAPTABLE_HEADER_SIZE) {
         return 0;
     }
 
     memcpy(&captable, payload, COMPONENT_CAPTABLE_HEADER_SIZE);
 
     if ((captable.magic != COMPONENT_CAPTABLE_MAGIC) ||
-        (captable.format_version != COMPONENT_CAPTABLE_FORMAT_VERSION) ||
         (captable._reserved != 0) ||
         (captable.slot_count > COMPONENT_CAP_SLOTS)) {
         return 0;
     }
 
+    if (captable.format_version == COMPONENT_CAPTABLE_FORMAT_VERSION_V1) {
+        if (payload_size != CAPTABLE_V1_PAYLOAD_BYTES) {
+            return 0;
+        }
+        table_bytes = CAPTABLE_CAPABILITIES_BYTES;
+    } else if (captable.format_version == COMPONENT_CAPTABLE_FORMAT_VERSION) {
+        if (payload_size != CAPTABLE_PAYLOAD_BYTES) {
+            return 0;
+        }
+        table_bytes = CAPTABLE_CAPABILITIES_BYTES + CAPTABLE_PARENTS_BYTES;
+    } else {
+        return 0;
+    }
+
     if (object_crc32c(payload + COMPONENT_CAPTABLE_HEADER_SIZE,
-                      sizeof(component->capabilities)) !=
+                      table_bytes) !=
         captable.payload_crc32c) {
         return 0;
     }
 
     memcpy(component->capabilities, payload + COMPONENT_CAPTABLE_HEADER_SIZE,
            sizeof(component->capabilities));
+    if (captable.format_version == COMPONENT_CAPTABLE_FORMAT_VERSION_V1) {
+        component_capability_parents_clear(component);
+    } else {
+        memcpy(component->capability_parents,
+               payload + CAPTABLE_V1_PAYLOAD_BYTES,
+               sizeof(component->capability_parents));
+    }
+    if (!component_capability_parents_valid(component,
+                                            captable.slot_count)) {
+        return 0;
+    }
     component->capability_count = captable.slot_count;
     component->next_object_sequence = captable.next_object_sequence;
     component->capabilities_dirty = 0;
@@ -530,6 +640,7 @@ int component_install(
     }
 
     memset(component_out, 0, sizeof(*component_out));
+    component_capability_parents_clear(component_out);
     component_out->module_id = component_sequence_id(sequence);
     component_out->captable_id = component_sequence_id(sequence + 1);
     component_out->state_id = component_sequence_id(sequence + 2);

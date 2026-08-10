@@ -825,4 +825,27 @@ write-ordering-negative` still exposes both seeded durability failures.
 
 Phase 3 is now complete against every item in its blueprint section.
 
+## 2026-08-09 (Phase 4) — Capability families support revocation
+
+Added a bounded capability table with 16 slots. Root capabilities can be
+inserted directly; delegated capabilities must pass the existing `GRANT` and
+rights-attenuation rules. Each child records its parent slot, creating a small
+capability derivation tree.
+
+Revocation scans that tree and clears the selected capability plus every
+descendant while preserving unrelated branches. The implementation is linked
+into the freestanding kernel, and hosted sanitizer tests cover delegation,
+denied amplification, denied delegation without `GRANT`, and recursive
+revocation.
+
+The component capability-table disk format is now version 2. It persists each
+slot's parent, checks bounds, cycles, object identity, `GRANT`, and rights
+attenuation while loading, and still reads version-1 tables by treating their
+capabilities as roots. A real second QEMU boot mounted the existing store and
+resumed the registered component through the new format.
+
+Gates: `make kernel` links and `make test` passes 8,918 checks, including 47
+capability checks under ASan/UBSan. A two-boot QEMU check reports `RECOVERY OK`
+and `component: resumed` on the second boot.
+
 <!-- Next entry goes here -->

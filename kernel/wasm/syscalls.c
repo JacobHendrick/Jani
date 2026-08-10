@@ -274,6 +274,7 @@ static int32_t jani_cap_drop_impl(wasm_exec_env_t exec_env, int32_t slot) {
     current->capabilities[slot].object = component_make_id(0, 0);
     current->capabilities[slot].rights = 0;
     current->capabilities[slot].badge = 0;
+    current->capability_parents[slot] = COMPONENT_CAP_PARENT_NONE;
     current->capabilities_dirty = 1;
     return 0;
 }
