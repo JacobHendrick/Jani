@@ -143,6 +143,19 @@ int component_capability_insert(
     uint32_t *slot_out
 );
 
+int component_capability_derive(
+    struct component *component,
+    uint32_t parent_slot,
+    uint32_t child_rights,
+    uint32_t child_badge,
+    uint32_t *child_slot_out
+);
+
+int component_capability_revoke(
+    struct component *component,
+    uint32_t slot
+);
+
 int component_captable_write(
     struct object_store *store,
     struct component *component

@@ -271,6 +271,64 @@ static void test_capability_table_is_bounded(void) {
                                       &slot) == 0);
 }
 
+static void test_component_capability_derivation(void) {
+    uint32_t root_slot;
+    uint32_t child_slot;
+    uint32_t grandchild_slot;
+
+    reset();
+
+    CHECK(component_capability_insert(
+              &component,
+              component_make_id(3, 42),
+              COMPONENT_RIGHTS_READ | COMPONENT_RIGHTS_WRITE |
+                  COMPONENT_RIGHTS_GRANT,
+              7,
+              &root_slot
+          ) == 1);
+    component.capabilities_dirty = 0;
+
+    CHECK(component_capability_derive(
+              &component,
+              root_slot,
+              COMPONENT_RIGHTS_READ | COMPONENT_RIGHTS_GRANT,
+              8,
+              &child_slot
+          ) == 1);
+    CHECK(child_slot == 1);
+    CHECK(component.capability_count == 2);
+    CHECK(component.capability_table.parents[child_slot] == root_slot);
+    CHECK(component.capability_table.slots[child_slot].badge == 8);
+    CHECK(component.capabilities_dirty == 1);
+
+    CHECK(component_capability_derive(
+              &component,
+              child_slot,
+              COMPONENT_RIGHTS_READ,
+              9,
+              &grandchild_slot
+          ) == 1);
+    CHECK(grandchild_slot == 2);
+    CHECK(component_capability_derive(
+              &component,
+              grandchild_slot,
+              COMPONENT_RIGHTS_READ,
+              10,
+              &root_slot
+          ) == 0);
+
+    component.capabilities_dirty = 0;
+    CHECK(component_capability_revoke(&component, child_slot) == 1);
+    CHECK(capability_table_get(&component.capability_table, child_slot) ==
+          NULL);
+    CHECK(capability_table_get(&component.capability_table,
+                               grandchild_slot) == NULL);
+    CHECK(capability_table_get(&component.capability_table, 0) != NULL);
+    CHECK(component.capability_count == 1);
+    CHECK(component.capabilities_dirty == 1);
+    CHECK(component_capability_revoke(&component, child_slot) == 0);
+}
+
 int main(void) {
     checks_passed = 0;
 
@@ -284,6 +342,7 @@ int main(void) {
     test_capability_slots();
     test_dropped_slot_is_reused();
     test_capability_table_is_bounded();
+    test_component_capability_derivation();
 
     printf("test_component_mailbox: %lu checks passed\n", checks_passed);
     return 0;

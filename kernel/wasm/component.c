@@ -87,6 +87,69 @@ int component_capability_insert(
     return 1;
 }
 
+int component_capability_derive(
+    struct component *component,
+    uint32_t parent_slot,
+    uint32_t child_rights,
+    uint32_t child_badge,
+    uint32_t *child_slot_out)
+{
+    uint32_t child_slot;
+
+    if (component == NULL || child_slot_out == NULL ||
+        !capability_table_is_valid(&component->capability_table) ||
+        parent_slot >= component->capability_count) {
+        return 0;
+    }
+
+    if (!capability_table_derive(
+            &component->capability_table,
+            parent_slot,
+            child_rights,
+            child_badge,
+            &child_slot)) {
+        return 0;
+    }
+
+    if (child_slot >= component->capability_count) {
+        component->capability_count = child_slot + 1;
+    }
+
+    component->capabilities_dirty = 1;
+    *child_slot_out = child_slot;
+    return 1;
+}
+
+int component_capability_revoke(
+    struct component *component,
+    uint32_t slot)
+{
+    if (component == NULL ||
+        !capability_table_is_valid(&component->capability_table) ||
+        slot >= component->capability_count) {
+        return 0;
+    }
+
+    if (!capability_table_revoke(&component->capability_table, slot)) {
+        return 0;
+    }
+
+    while (component->capability_count > 0) {
+        uint32_t last_slot = component->capability_count - 1;
+
+        if (capability_table_get(
+                &component->capability_table,
+                last_slot) != NULL) {
+            break;
+        }
+
+        component->capability_count--;
+    }
+
+    component->capabilities_dirty = 1;
+    return 1;
+}
+
 static struct object_id component_sequence_id(uint64_t sequence) {
     return component_make_id(COMPONENT_SEQUENCE_ID_HIGH, sequence);
 }
