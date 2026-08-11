@@ -77,6 +77,7 @@ static struct component component;
 
 static void reset(void) {
     memset(&component, 0, sizeof(component));
+    capability_table_init(&component.capability_table);
 }
 
 static void test_push_pop_round_trip(void) {
@@ -221,7 +222,7 @@ static void test_capability_slots(void) {
                                       COMPONENT_RIGHTS_WRITE, 0, &slot) == 1);
     CHECK(slot == 0);
     CHECK(component.capability_count == 2);
-    CHECK(component.capabilities[0].rights ==
+    CHECK(component.capability_table.slots[0].rights ==
           (COMPONENT_RIGHTS_READ | COMPONENT_RIGHTS_WRITE));
 
     CHECK(component_capability_insert(&component, component_make_id(0, 0),
@@ -242,7 +243,9 @@ static void test_dropped_slot_is_reused(void) {
     CHECK(component_capability_insert(&component, first, 1, 0, &slot) == 1);
     CHECK(component_capability_insert(&component, second, 1, 0, &slot) == 1);
 
-    component.capabilities[0].object = component_make_id(0, 0);
+    memset(&component.capability_table.slots[0], 0,
+           sizeof(component.capability_table.slots[0]));
+    component.capability_table.parents[0] = COMPONENT_CAP_PARENT_NONE;
 
     CHECK(component_capability_find(&component, first, &slot) == 0);
     CHECK(component_capability_insert(&component, third, 1, 0, &slot) == 1);

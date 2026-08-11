@@ -6,6 +6,7 @@
 
 #include "../obj/object_id.h"
 #include "../obj/object_store.h"
+#include "../cap/cap_table.h"
 
 #define COMPONENT_REGISTRY_ID_HIGH UINT64_C(1)
 #define COMPONENT_REGISTRY_ID_LOW UINT64_C(0)
@@ -25,6 +26,10 @@
 #define COMPONENT_CAPTABLE_FORMAT_VERSION UINT32_C(2)
 #define COMPONENT_CAPTABLE_HEADER_SIZE 32u
 
+#ifndef COMPONENT_MAILBOX_BYTES
+#define COMPONENT_MAILBOX_BYTES 4096u
+#endif
+
 #define JANI_EINVAL (-1)
 #define JANI_EPERM (-2)
 #define JANI_ENOSPC (-3)
@@ -33,14 +38,13 @@
 #define JANI_ENOENT (-6)
 
 #define COMPONENT_MAX 4u
-#define COMPONENT_CAP_SLOTS 16u
-#define COMPONENT_CAP_PARENT_NONE UINT32_MAX
-#define COMPONENT_MAILBOX_BYTES 512u
+#define COMPONENT_CAP_SLOTS CAP_TABLE_SLOTS
+#define COMPONENT_CAP_PARENT_NONE CAP_SLOT_NONE
 
-#define COMPONENT_RIGHTS_READ UINT32_C(0x1)
-#define COMPONENT_RIGHTS_WRITE UINT32_C(0x2)
-#define COMPONENT_RIGHTS_SEND UINT32_C(0x4)
-#define COMPONENT_RIGHTS_GRANT UINT32_C(0x8)
+#define COMPONENT_RIGHTS_READ CAP_RIGHT_READ
+#define COMPONENT_RIGHTS_WRITE CAP_RIGHT_WRITE
+#define COMPONENT_RIGHTS_SEND CAP_RIGHT_SEND
+#define COMPONENT_RIGHTS_GRANT CAP_RIGHT_GRANT
 
 #define COMPONENT_REGISTRY_MAGIC UINT64_C(0x4A414E495F524547)
 #define COMPONENT_REGISTRY_FORMAT_VERSION UINT32_C(1)
@@ -96,12 +100,6 @@ _Static_assert(
     "capability table header must be exactly 32 bytes"
 );
 
-struct component_capability {
-    struct object_id object;
-    uint32_t rights;
-    uint32_t badge;
-};
-
 struct component {
     struct object_id root_id;
     struct object_id module_id;
@@ -115,8 +113,7 @@ struct component {
     uint32_t mailbox_used;
     uint8_t mailbox[COMPONENT_MAILBOX_BYTES];
 
-    struct component_capability capabilities[COMPONENT_CAP_SLOTS];
-    uint32_t capability_parents[COMPONENT_CAP_SLOTS];
+    struct capability_table capability_table;
     uint32_t capability_count;
     uint64_t next_object_sequence;
     uint32_t capabilities_dirty;

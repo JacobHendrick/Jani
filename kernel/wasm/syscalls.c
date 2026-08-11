@@ -43,6 +43,8 @@ static uint8_t *linear_memory(
 }
 
 static int slot_object(int32_t slot, struct object_id *object_out) {
+    const struct capability *capability;
+
     if (current == NULL) {
         return 0;
     }
@@ -51,16 +53,26 @@ static int slot_object(int32_t slot, struct object_id *object_out) {
         return 0;
     }
 
-    if (object_id_is_zero(current->capabilities[slot].object)) {
+    capability = capability_table_get(
+        &current->capability_table,
+        (uint32_t)slot
+    );
+    if (capability == NULL) {
         return 0;
     }
 
-    *object_out = current->capabilities[slot].object;
+    *object_out = capability->object;
     return 1;
 }
 
 static int slot_allows(int32_t slot, uint32_t rights) {
-    return (current->capabilities[slot].rights & rights) == rights;
+    const struct capability *capability;
+
+    capability = capability_table_get(
+        &current->capability_table,
+        (uint32_t)slot
+    );
+    return capability_allows(capability, rights);
 }
 
 static int32_t jani_log_impl(
@@ -271,10 +283,9 @@ static int32_t jani_cap_drop_impl(wasm_exec_env_t exec_env, int32_t slot) {
         return JANI_EINVAL;
     }
 
-    current->capabilities[slot].object = component_make_id(0, 0);
-    current->capabilities[slot].rights = 0;
-    current->capabilities[slot].badge = 0;
-    current->capability_parents[slot] = COMPONENT_CAP_PARENT_NONE;
+    memset(&current->capability_table.slots[slot], 0,
+           sizeof(current->capability_table.slots[slot]));
+    current->capability_table.parents[slot] = COMPONENT_CAP_PARENT_NONE;
     current->capabilities_dirty = 1;
     return 0;
 }

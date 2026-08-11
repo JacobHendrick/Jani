@@ -88,20 +88,32 @@ static void test_invalid_derivation(void) {
 
 static void test_capability_table(void) {
     struct capability_table table;
+    struct capability_table invalid;
     struct capability root;
     const struct capability *child;
+    struct object_id missing;
     uint32_t root_slot;
     uint32_t child_slot;
     uint32_t grant_slot;
     uint32_t grandchild_slot;
+    uint32_t found_slot;
 
     capability_table_init(&table);
     CHECK(capability_table_get(&table, 0) == NULL);
+    CHECK(capability_table_is_valid(&table) == 1);
 
     root = make_capability(CAP_RIGHT_ALL, 7);
     CHECK(capability_table_insert_root(&table, &root, &root_slot) == 1);
     CHECK(root_slot == 0);
     CHECK(table.parents[root_slot] == CAP_SLOT_NONE);
+    CHECK(capability_table_find(&table, root.object, &found_slot) == 1);
+    CHECK(found_slot == root_slot);
+
+    missing.high = UINT64_C(9);
+    missing.low = UINT64_C(9);
+    CHECK(capability_table_find(&table, missing, &found_slot) == 0);
+    CHECK(capability_table_find(NULL, root.object, &found_slot) == 0);
+    CHECK(capability_table_find(&table, root.object, NULL) == 0);
 
     CHECK(capability_table_derive(
               &table, root_slot, CAP_RIGHT_READ, 99, &child_slot
@@ -111,6 +123,24 @@ static void test_capability_table(void) {
     CHECK(child->rights == CAP_RIGHT_READ);
     CHECK(child->badge == 99);
     CHECK(table.parents[child_slot] == root_slot);
+    CHECK(capability_table_is_valid(&table) == 1);
+
+    invalid = table;
+    invalid.parents[child_slot] = CAP_TABLE_SLOTS;
+    CHECK(capability_table_is_valid(&invalid) == 0);
+
+    invalid = table;
+    invalid.parents[root_slot] = child_slot;
+    CHECK(capability_table_is_valid(&invalid) == 0);
+
+    invalid = table;
+    invalid.slots[child_slot].object.low++;
+    CHECK(capability_table_is_valid(&invalid) == 0);
+
+    invalid = table;
+    invalid.slots[child_slot].rights = CAP_RIGHT_ALL;
+    invalid.slots[root_slot].rights = CAP_RIGHT_READ | CAP_RIGHT_GRANT;
+    CHECK(capability_table_is_valid(&invalid) == 0);
 
     CHECK(capability_table_derive(
               &table, child_slot, CAP_RIGHT_READ, 0, NULL

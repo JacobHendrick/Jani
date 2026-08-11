@@ -121,3 +121,88 @@ int capability_table_revoke(struct capability_table *table, uint32_t slot)
 
     return 1;
 }
+int capability_table_find(
+    const struct capability_table *table,
+    struct object_id object,
+    uint32_t *slot_out)
+{
+    if (table == NULL || slot_out == NULL || object_id_is_zero(object)) {
+        return 0;
+    }
+
+    for (uint32_t slot = 0; slot < CAP_TABLE_SLOTS; slot++) {
+        const struct capability *capability;
+
+        capability = capability_table_get(table, slot);
+
+        if (capability != NULL &&
+            object_id_equal(capability->object, object)) {
+            *slot_out = slot;
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+int capability_table_is_valid(const struct capability_table *table)
+{
+    if (table == NULL) {
+        return 0;
+    }
+
+    for (uint32_t slot = 0; slot < CAP_TABLE_SLOTS; slot++) {
+        uint32_t current;
+        uint32_t depth;
+
+        if (object_id_is_zero(table->slots[slot].object)) {
+            if (table->slots[slot].rights != 0 ||
+                table->slots[slot].badge != 0 ||
+                table->parents[slot] != CAP_SLOT_NONE) {
+                return 0;
+            }
+
+            continue;
+        }
+
+        if (!capability_is_valid(&table->slots[slot])) {
+            return 0;
+        }
+
+        current = slot;
+
+        for (depth = 0; depth < CAP_TABLE_SLOTS; depth++) {
+            uint32_t parent_slot;
+            const struct capability *child;
+            const struct capability *parent;
+
+            parent_slot = table->parents[current];
+
+            if (parent_slot == CAP_SLOT_NONE) {
+                break;
+            }
+
+            if (parent_slot >= CAP_TABLE_SLOTS) {
+                return 0;
+            }
+
+            child = capability_table_get(table, current);
+            parent = capability_table_get(table, parent_slot);
+
+            if (!capability_is_valid(parent) ||
+                !object_id_equal(child->object, parent->object) ||
+                !capability_allows(parent, CAP_RIGHT_GRANT) ||
+                (child->rights & parent->rights) != child->rights) {
+                return 0;
+            }
+
+            current = parent_slot;
+        }
+
+        if (depth == CAP_TABLE_SLOTS) {
+            return 0;
+        }
+    }
+
+    return 1;
+}

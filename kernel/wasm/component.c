@@ -19,26 +19,17 @@ struct object_id component_make_id(uint64_t high, uint64_t low) {
 int component_capability_find(
     const struct component *component,
     struct object_id object,
-    uint32_t *slot_out
-) {
-    uint32_t index;
-
-    if ((component == NULL) || (slot_out == NULL)) {
+    uint32_t *slot_out)
+{
+    if (component == NULL) {
         return 0;
     }
 
-    if (object_id_is_zero(object)) {
-        return 0;
-    }
-
-    for (index = 0; index < component->capability_count; index++) {
-        if (object_id_equal(component->capabilities[index].object, object)) {
-            *slot_out = index;
-            return 1;
-        }
-    }
-
-    return 0;
+    return capability_table_find(
+        &component->capability_table,
+        object,
+        slot_out
+    );
 }
 
 int component_capability_insert(
@@ -46,44 +37,52 @@ int component_capability_insert(
     struct object_id object,
     uint32_t rights,
     uint32_t badge,
-    uint32_t *slot_out
-) {
+    uint32_t *slot_out)
+{
+    struct capability capability;
+    struct capability previous;
     uint32_t slot;
 
-    if ((component == NULL) || (slot_out == NULL)) {
+    if (component == NULL || slot_out == NULL ||
+        !capability_table_is_valid(&component->capability_table)) {
         return 0;
     }
 
-    if (object_id_is_zero(object)) {
-        return 0;
-    }
+    if (capability_table_find(
+            &component->capability_table,
+            object,
+            &slot)) {
+        previous = component->capability_table.slots[slot];
+        capability = previous;
+        capability.rights |= rights;
 
-    if (component_capability_find(component, object, &slot)) {
-        component->capabilities[slot].rights |= rights;
-        component->capabilities_dirty = 1;
-        *slot_out = slot;
-        return 1;
-    }
-
-    for (slot = 0; slot < component->capability_count; slot++) {
-        if (object_id_is_zero(component->capabilities[slot].object)) {
-            break;
-        }
-    }
-
-    if (slot == component->capability_count) {
-        if (component->capability_count >= COMPONENT_CAP_SLOTS) {
+        if (!capability_is_valid(&capability)) {
             return 0;
         }
-        component->capability_count = slot + 1;
+
+        component->capability_table.slots[slot] = capability;
+        if (!capability_table_is_valid(&component->capability_table)) {
+            component->capability_table.slots[slot] = previous;
+            return 0;
+        }
+    } else {
+        capability.object = object;
+        capability.rights = rights;
+        capability.badge = badge;
+
+        if (!capability_table_insert_root(
+                &component->capability_table,
+                &capability,
+                &slot)) {
+            return 0;
+        }
+
+        if (slot >= component->capability_count) {
+            component->capability_count = slot + 1;
+        }
     }
 
-    component->capabilities[slot].object = object;
-    component->capabilities[slot].rights = rights;
-    component->capabilities[slot].badge = badge;
-    component->capability_parents[slot] = COMPONENT_CAP_PARENT_NONE;
     component->capabilities_dirty = 1;
-
     *slot_out = slot;
     return 1;
 }
@@ -93,7 +92,7 @@ static struct object_id component_sequence_id(uint64_t sequence) {
 }
 
 #define CAPTABLE_CAPABILITIES_BYTES \
-    (COMPONENT_CAP_SLOTS * sizeof(struct component_capability))
+    (COMPONENT_CAP_SLOTS * sizeof(struct capability))
 #define CAPTABLE_PARENTS_BYTES \
     (COMPONENT_CAP_SLOTS * sizeof(uint32_t))
 #define CAPTABLE_V1_PAYLOAD_BYTES \
@@ -106,57 +105,22 @@ static void component_capability_parents_clear(struct component *component) {
     uint32_t slot;
 
     for (slot = 0; slot < COMPONENT_CAP_SLOTS; slot++) {
-        component->capability_parents[slot] = COMPONENT_CAP_PARENT_NONE;
+        component->capability_table.parents[slot] = COMPONENT_CAP_PARENT_NONE;
     }
 }
 
-static int component_capability_parents_valid(
+static int component_capability_table_valid(
     const struct component *component,
     uint32_t slot_count
 ) {
     uint32_t slot;
 
-    for (slot = 0; slot < COMPONENT_CAP_SLOTS; slot++) {
-        uint32_t current;
-        uint32_t depth;
+    if (!capability_table_is_valid(&component->capability_table)) {
+        return 0;
+    }
 
-        if ((slot >= slot_count) &&
-            !object_id_is_zero(component->capabilities[slot].object)) {
-            return 0;
-        }
-
-        if (object_id_is_zero(component->capabilities[slot].object)) {
-            if (component->capability_parents[slot] !=
-                COMPONENT_CAP_PARENT_NONE) {
-                return 0;
-            }
-            continue;
-        }
-
-        current = slot;
-        for (depth = 0; depth < COMPONENT_CAP_SLOTS; depth++) {
-            uint32_t parent = component->capability_parents[current];
-
-            if (parent == COMPONENT_CAP_PARENT_NONE) {
-                break;
-            }
-            if ((parent >= slot_count) ||
-                object_id_is_zero(component->capabilities[parent].object)) {
-                return 0;
-            }
-            if (!object_id_equal(component->capabilities[current].object,
-                                 component->capabilities[parent].object) ||
-                ((component->capabilities[parent].rights &
-                  COMPONENT_RIGHTS_GRANT) == 0) ||
-                ((component->capabilities[current].rights &
-                  component->capabilities[parent].rights) !=
-                 component->capabilities[current].rights)) {
-                return 0;
-            }
-            current = parent;
-        }
-
-        if (depth == COMPONENT_CAP_SLOTS) {
+    for (slot = slot_count; slot < COMPONENT_CAP_SLOTS; slot++) {
+        if (capability_table_get(&component->capability_table, slot) != NULL) {
             return 0;
         }
     }
@@ -175,19 +139,21 @@ int component_captable_write(
         return 0;
     }
     if ((component->capability_count > COMPONENT_CAP_SLOTS) ||
-        !component_capability_parents_valid(
+        !component_capability_table_valid(
             component, component->capability_count
         )) {
         return 0;
     }
 
     memset(buffer, 0, sizeof(buffer));
-    memcpy(buffer + COMPONENT_CAPTABLE_HEADER_SIZE, component->capabilities,
-           sizeof(component->capabilities));
+    memcpy(buffer + COMPONENT_CAPTABLE_HEADER_SIZE,
+           component->capability_table.slots,
+           sizeof(component->capability_table.slots));
     for (uint32_t slot = 0; slot < COMPONENT_CAP_SLOTS; slot++) {
-        uint32_t parent = component->capability_parents[slot];
+        uint32_t parent = component->capability_table.parents[slot];
 
-        if (object_id_is_zero(component->capabilities[slot].object)) {
+        if (object_id_is_zero(
+                component->capability_table.slots[slot].object)) {
             parent = COMPONENT_CAP_PARENT_NONE;
         }
         memcpy(buffer + CAPTABLE_V1_PAYLOAD_BYTES +
@@ -269,17 +235,17 @@ int component_captable_read(
         return 0;
     }
 
-    memcpy(component->capabilities, payload + COMPONENT_CAPTABLE_HEADER_SIZE,
-           sizeof(component->capabilities));
+    memcpy(component->capability_table.slots,
+           payload + COMPONENT_CAPTABLE_HEADER_SIZE,
+           sizeof(component->capability_table.slots));
     if (captable.format_version == COMPONENT_CAPTABLE_FORMAT_VERSION_V1) {
         component_capability_parents_clear(component);
     } else {
-        memcpy(component->capability_parents,
+        memcpy(component->capability_table.parents,
                payload + CAPTABLE_V1_PAYLOAD_BYTES,
-               sizeof(component->capability_parents));
+               sizeof(component->capability_table.parents));
     }
-    if (!component_capability_parents_valid(component,
-                                            captable.slot_count)) {
+    if (!component_capability_table_valid(component, captable.slot_count)) {
         return 0;
     }
     component->capability_count = captable.slot_count;
@@ -640,7 +606,7 @@ int component_install(
     }
 
     memset(component_out, 0, sizeof(*component_out));
-    component_capability_parents_clear(component_out);
+    capability_table_init(&component_out->capability_table);
     component_out->module_id = component_sequence_id(sequence);
     component_out->captable_id = component_sequence_id(sequence + 1);
     component_out->state_id = component_sequence_id(sequence + 2);

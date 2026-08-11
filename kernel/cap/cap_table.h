@@ -39,4 +39,14 @@ int capability_table_revoke(
     uint32_t slot
 );
 
+int capability_table_find(
+    const struct capability_table *table,
+    struct object_id object,
+    uint32_t *slot_out
+);
+
+int capability_table_is_valid(
+    const struct capability_table *table
+);
+
 #endif

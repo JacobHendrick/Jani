@@ -848,4 +848,20 @@ Gates: `make kernel` links and `make test` passes 8,918 checks, including 47
 capability checks under ASan/UBSan. A two-boot QEMU check reports `RECOVERY OK`
 and `component: resumed` on the second boot.
 
+## 2026-08-11 (Phase 4) — Components use the shared capability engine
+
+Removed the component subsystem's duplicate capability and parent arrays.
+Components now own a `struct capability_table`; lookup, insertion, persisted
+validation, and syscall permission checks all pass through the shared engine.
+The version-2 disk bytes remain unchanged, and the legacy version-1 reader
+still treats imported capabilities as roots.
+
+The component insertion wrapper rejects invalid tables and rolls back a rights
+merge if it would violate a parent relationship. Hosted component tests now
+link the same capability implementation as the freestanding kernel.
+
+Gates: `make test` passes 8,929 checks, the focused mailbox/capability test
+passes 72 checks, the persistence/uninstall test passes 38 checks, and `make
+kernel` links.
+
 <!-- Next entry goes here -->

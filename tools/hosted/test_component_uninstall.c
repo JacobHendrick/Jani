@@ -14,7 +14,7 @@
 #define ARENA_BYTES 16384u
 #define LEGACY_CAPTABLE_BYTES \
     (COMPONENT_CAPTABLE_HEADER_SIZE + \
-     (COMPONENT_CAP_SLOTS * sizeof(struct component_capability)))
+     (COMPONENT_CAP_SLOTS * sizeof(struct capability)))
 
 unsigned long checks_passed;
 
@@ -83,7 +83,8 @@ static int write_legacy_captable(
 
     memset(payload, 0, sizeof(payload));
     memcpy(payload + COMPONENT_CAPTABLE_HEADER_SIZE,
-           component->capabilities, sizeof(component->capabilities));
+           component->capability_table.slots,
+           sizeof(component->capability_table.slots));
 
     memset(&header, 0, sizeof(header));
     header.magic = COMPONENT_CAPTABLE_MAGIC;
@@ -92,7 +93,7 @@ static int write_legacy_captable(
     header.next_object_sequence = component->next_object_sequence;
     header.payload_crc32c = object_crc32c(
         payload + COMPONENT_CAPTABLE_HEADER_SIZE,
-        sizeof(component->capabilities)
+        sizeof(component->capability_table.slots)
     );
     memcpy(payload, &header, sizeof(header));
 
@@ -179,23 +180,21 @@ static void test_uninstall_removes_only_install_state(void) {
                               sizeof(bitmap), arena, sizeof(arena)));
 
     memset(&saved_caps, 0, sizeof(saved_caps));
+    capability_table_init(&saved_caps.capability_table);
     saved_caps.root_id = root_id;
     saved_caps.captable_id = captable_id;
     saved_caps.capability_count = 3;
     saved_caps.next_object_sequence = 17;
-    saved_caps.capabilities[0].object = root_id;
-    saved_caps.capabilities[0].rights = COMPONENT_RIGHTS_READ |
-                                        COMPONENT_RIGHTS_GRANT;
-    saved_caps.capabilities[1].object = root_id;
-    saved_caps.capabilities[1].rights = COMPONENT_RIGHTS_READ |
-                                        COMPONENT_RIGHTS_GRANT;
-    saved_caps.capabilities[2].object = root_id;
-    saved_caps.capabilities[2].rights = COMPONENT_RIGHTS_READ;
-    for (size_t slot = 0; slot < COMPONENT_CAP_SLOTS; slot++) {
-        saved_caps.capability_parents[slot] = COMPONENT_CAP_PARENT_NONE;
-    }
-    saved_caps.capability_parents[1] = 0;
-    saved_caps.capability_parents[2] = 1;
+    saved_caps.capability_table.slots[0].object = root_id;
+    saved_caps.capability_table.slots[0].rights = COMPONENT_RIGHTS_READ |
+                                                 COMPONENT_RIGHTS_GRANT;
+    saved_caps.capability_table.slots[1].object = root_id;
+    saved_caps.capability_table.slots[1].rights = COMPONENT_RIGHTS_READ |
+                                                 COMPONENT_RIGHTS_GRANT;
+    saved_caps.capability_table.slots[2].object = root_id;
+    saved_caps.capability_table.slots[2].rights = COMPONENT_RIGHTS_READ;
+    saved_caps.capability_table.parents[1] = 0;
+    saved_caps.capability_table.parents[2] = 1;
 
     CHECK(component_captable_write(&store, &saved_caps));
     memset(&loaded_caps, 0, sizeof(loaded_caps));
@@ -203,10 +202,12 @@ static void test_uninstall_removes_only_install_state(void) {
     CHECK(component_captable_read(&store, &loaded_caps));
     CHECK(loaded_caps.capability_count == 3);
     CHECK(loaded_caps.next_object_sequence == 17);
-    CHECK(loaded_caps.capability_parents[0] == COMPONENT_CAP_PARENT_NONE);
-    CHECK(loaded_caps.capability_parents[1] == 0);
-    CHECK(loaded_caps.capability_parents[2] == 1);
-    CHECK(loaded_caps.capabilities[2].rights == COMPONENT_RIGHTS_READ);
+    CHECK(loaded_caps.capability_table.parents[0] ==
+          COMPONENT_CAP_PARENT_NONE);
+    CHECK(loaded_caps.capability_table.parents[1] == 0);
+    CHECK(loaded_caps.capability_table.parents[2] == 1);
+    CHECK(loaded_caps.capability_table.slots[2].rights ==
+          COMPONENT_RIGHTS_READ);
 
     saved_caps.next_object_sequence = 18;
     CHECK(write_legacy_captable(&store, &saved_caps));
@@ -214,9 +215,12 @@ static void test_uninstall_removes_only_install_state(void) {
     loaded_caps.captable_id = captable_id;
     CHECK(component_captable_read(&store, &loaded_caps));
     CHECK(loaded_caps.next_object_sequence == 18);
-    CHECK(loaded_caps.capability_parents[0] == COMPONENT_CAP_PARENT_NONE);
-    CHECK(loaded_caps.capability_parents[1] == COMPONENT_CAP_PARENT_NONE);
-    CHECK(loaded_caps.capability_parents[2] == COMPONENT_CAP_PARENT_NONE);
+    CHECK(loaded_caps.capability_table.parents[0] ==
+          COMPONENT_CAP_PARENT_NONE);
+    CHECK(loaded_caps.capability_table.parents[1] ==
+          COMPONENT_CAP_PARENT_NONE);
+    CHECK(loaded_caps.capability_table.parents[2] ==
+          COMPONENT_CAP_PARENT_NONE);
 
     CHECK(object_store_put(&store, module_id,
                            make_id(0, COMPONENT_TYPE_MODULE), root_id,
