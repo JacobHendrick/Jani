@@ -87,7 +87,7 @@ set `CR4.OSFXSR` and `CR4.OSXMMEXCPT`, then `call kmain`.
 floating-point exceptions to vector 19 (`#XF`), which the IDT must handle.
 Without it these surface as confusing faults elsewhere.
 
-**Consequence — a stale check.** project documentation currently instructs that
+**Consequence — a stale check.** docs/devlog.md currently instructs that
 `objdump -d build/jani.elf | grep -c xmm` must print 0. That becomes wrong and
 must be removed in the same change, or it will read as a regression.
 
@@ -272,7 +272,7 @@ Split on the working agreement's axis — how loudly a bug announces itself.
 | `kernel/wasm/runtime.c` — WAMR lifecycle | The integration, and the pattern later slices copy |
 | `jani_log` and its linear-memory bounds check | First host function; sets house style for the entire syscall surface |
 
-**Jacob writes** — loud failure, mechanical, spec-driven:
+**Support work** — loud failure, mechanical, spec-driven:
 
 | Piece | Why |
 |---|---|
@@ -281,9 +281,9 @@ Split on the working agreement's axis — how loudly a bug announces itself.
 | `kernel/wasm/platform/` | Adapter transcription against a documented API |
 | `kernel/wasm/module_validate.zig` + tests + fuzzer | Zig trust-boundary validator |
 | The test `.wasm` module | Tooling |
-| Spec, plan, devlog, project documentation updates | Docs |
+| Spec, plan, devlog, docs/devlog.md updates | Docs |
 
-Jacob reviews everything, including Jacob's pieces.
+Every change receives review, including Jacob's pieces.
 
 ## Risks
 

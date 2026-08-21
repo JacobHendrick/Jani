@@ -123,16 +123,16 @@ record instance_state_header size 64 {
 |---|---|---|
 | `idl/syscalls.idl` | Jacob | the twelve calls, post-D3.11 |
 | `idl/records.idl` | Jacob | the four on-disk layouts |
-| `tools/idlc/lexer.h` / `.c` | Jacob | source text → token stream |
-| `tools/idlc/ast.h` | Jacob | AST types shared by parser and emitters |
-| `tools/idlc/parser.h` / `.c` | Jacob | tokens → AST |
-| `tools/idlc/emit.h` | Jacob | the one emitter interface (D3.15) |
-| `tools/idlc/emit_zig.c` | Jacob | Zig guest SDK |
-| `tools/idlc/emit_c.c` | Jacob | C guest SDK |
-| `tools/idlc/emit_table.c` | Jacob | WAMR `NativeSymbol` table |
-| `tools/idlc/emit_conform.c` | Jacob | record `_Static_assert`s |
-| `tools/idlc/main.c` | Jacob | CLI: read `.idl`, run emitters |
-| `tools/hosted/test_idlc.c` | Jacob | lexer, parser, and emitter tests |
+| `tools/idlc/lexer.h` / `.c` | Support | source text → token stream |
+| `tools/idlc/ast.h` | Support | AST types shared by parser and emitters |
+| `tools/idlc/parser.h` / `.c` | Support | tokens → AST |
+| `tools/idlc/emit.h` | Support | the one emitter interface (D3.15) |
+| `tools/idlc/emit_zig.c` | Support | Zig guest SDK |
+| `tools/idlc/emit_c.c` | Support | C guest SDK |
+| `tools/idlc/emit_table.c` | Support | WAMR `NativeSymbol` table |
+| `tools/idlc/emit_conform.c` | Support | record `_Static_assert`s |
+| `tools/idlc/main.c` | Support | CLI: read `.idl`, run emitters |
+| `tools/hosted/test_idlc.c` | Support | lexer, parser, and emitter tests |
 | `sdk/zig/jani.zig` | generated | |
 | `sdk/c/jani.h` | generated | |
 | `kernel/wasm/generated/syscall_table.h` | generated | |
@@ -1356,13 +1356,13 @@ gate."
 
 ---
 
-## Task 11: Devlog and project documentation
+## Task 11: Devlog and docs/devlog.md
 
-**Files:** Modify `docs/devlog.md`, `project documentation`
+**Files:** Modify `docs/devlog.md`, `docs/devlog.md`
 
 - [ ] **Step 1: Write the devlog entry** at the `<!-- Next entry goes here -->` marker. Cover: what the slice was for, the D3.11 revision and specifically the `timer_set` overflow that the other three arguments did not have, the lowering table reproducing all twelve strings, and the final gate numbers with real output.
 
-- [ ] **Step 2: Update project documentation's "Current state"** — slice 3 complete, the new `make idl-check` / `make idl-negative` gates in the Build and verify list, the updated `make test` count, and one non-obvious note: *the `.idl` is the source for the guest and the symbol table, but never for the `_impl` bodies or the on-disk structs; those are asserted, not generated.*
+- [ ] **Step 2: Update docs/devlog.md's "Current state"** — slice 3 complete, the new `make idl-check` / `make idl-negative` gates in the Build and verify list, the updated `make test` count, and one non-obvious note: *the `.idl` is the source for the guest and the symbol table, but never for the `_impl` bodies or the on-disk structs; those are asserted, not generated.*
 
 - [ ] **Step 3: Run every gate one final time and paste real output**
 
@@ -1379,7 +1379,7 @@ git status
 - [ ] **Step 4: Commit**
 
 ```bash
-git add docs/devlog.md project documentation
+git add docs/devlog.md docs/devlog.md
 git commit -m "Devlog and current state for IDL v1"
 ```
 

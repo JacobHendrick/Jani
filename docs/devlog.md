@@ -415,7 +415,7 @@ for byte. All three commits verified green individually, not just the tip.
 
 ## 2026-08-03 — Flush becomes testable, and the wow demo gets a spec
 
-Slice 2 was designed and Jacob's half of it built. Jacob's half — the on-disk
+Slice 2 was designed and the support half of it built. Jacob's half — the on-disk
 layouts, the syscall ABI as implemented, the resume path, the tick loop — is
 next and is untouched here.
 

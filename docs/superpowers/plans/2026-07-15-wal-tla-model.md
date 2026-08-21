@@ -107,8 +107,7 @@ Expected: `third_party/tla2tools.jar: OK`, then TLC usage text (proves system Ja
 git check-ignore third_party/tla2tools.jar && ADD="-f" || ADD=""
 git add $ADD third_party/tla2tools.jar
 git add Makefile
-git commit -m "Vendor TLC (tla2tools 1.7.4) for R9 protocol models
-
+git commit -m "Vendor TLC (tla2tools 1.7.4) for R9 protocol models"
 ```
 
 ---
@@ -218,8 +217,7 @@ Expected: `Model checking completed. No error has been found.` with a few hundre
 
 ```bash
 git add docs/models/WalCommitAbstract.tla docs/models/WalCommitAbstract.cfg
-git commit -m "R9: abstract WAL commit spec (the atomic-durable promise)
-
+git commit -m "R9: abstract WAL commit spec (the atomic-durable promise)"
 ```
 
 ---
@@ -529,8 +527,7 @@ Expected: `Model checking completed. No error has been found.` (roughly a few th
 
 ```bash
 git add docs/models/WalCommit.tla docs/models/WalCommit.cfg Makefile
-git commit -m "R9: sector-level WAL commit model, crash-free happy path
-
+git commit -m "R9: sector-level WAL commit model, crash-free happy path"
 ```
 
 ---
@@ -565,8 +562,7 @@ Expected: `Model checking completed. No error has been found.` — now over the 
 
 ```bash
 git add docs/models/WalCommit.tla docs/models/WalCommit.cfg
-git commit -m "R9: crash semantics and torn-version invariant (subset-crash model)
-
+git commit -m "R9: crash semantics and torn-version invariant (subset-crash model)"
 ```
 
 ---
@@ -635,8 +631,7 @@ Expected: `Model checking completed. No error has been found.` Property checking
 
 ```bash
 git add docs/models/WalCommit.tla docs/models/WalCommit.cfg
-git commit -m "R9: refinement of abstract commit machine + durability invariant
-
+git commit -m "R9: refinement of abstract commit machine + durability invariant"
 ```
 
 ---
@@ -717,8 +712,7 @@ Expected: positive run clean; negative run prints `ok: violation found` three ti
 ```bash
 git add docs/models/WalCommitBugNoFlush.cfg docs/models/WalCommitBugTruncateFirst.cfg \
         docs/models/WalCommitBugSkipChecksum.cfg Makefile
-git commit -m "R9: negative validation - three protocol mutants TLC must break
-
+git commit -m "R9: negative validation - three protocol mutants TLC must break"
 ```
 
 ---
@@ -787,6 +781,5 @@ Expected: all green (hosted tests still pass — proves the Makefile edits broke
 
 ```bash
 git add docs/superpowers/specs/2026-07-15-wal-tla-model-design.md docs/devlog.md README.md
-git commit -m "Docs: R9 WAL model devlog entry, spec mutant rename, README targets
-
+git commit -m "Docs: R9 WAL model devlog entry, spec mutant rename, README targets"
 ```

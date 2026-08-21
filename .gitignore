@@ -3,7 +3,6 @@ build/
 
 # Editor configuration
 .vscode/
-.jacob/
 
 # Vendored Zig toolchain: not committed (391 MB). The pinned release lives
 # in .zig-version -- download that exact version from ziglang.org/download

@@ -47,7 +47,7 @@ passes, so that gate cannot distinguish a barrier from a no-op.
 The question splits in two:
 
 1. **Does the device honor the barrier?** Hardware. Needs a real machine and a
-   real power cut. Jacob cannot verify hardware (per project documentation), so this
+   real power cut. Hardware cannot be verified automatically (per docs/devlog.md), so this
    remains a stated assumption, and the wow demo on real metal is its test.
 2. **Does our code issue the barrier in the right places?** Software, and
    testable hosted today.
@@ -389,7 +389,7 @@ decreases.
 | The tick loop and commit sequencing | The durability contract itself |
 | Registry format and ID allocation | Permanent format |
 
-**Jacob writes** — loud failure, mechanical, spec-driven:
+**Support work** — loud failure, mechanical, spec-driven:
 
 | Piece | Why |
 |---|---|
@@ -398,9 +398,9 @@ decreases.
 | `kernel/wasm/syscall_args.zig` + tests + fuzzer | Zig trust-boundary validator |
 | Component-state serialization tests | Test harness |
 | `make wow-demo` harness and build integration | Build system |
-| Spec, plan, devlog, project documentation updates | Docs |
+| Spec, plan, devlog, docs/devlog.md updates | Docs |
 
-Jacob reviews everything, including Jacob's pieces.
+Every change receives review, including Jacob's pieces.
 
 ## Risks
 

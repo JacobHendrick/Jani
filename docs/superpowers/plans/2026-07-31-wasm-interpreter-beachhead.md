@@ -12,8 +12,8 @@
 
 ## Global Constraints
 
-- **Ownership is marked per task as [JACOB] or [JACOB].** The split follows the working agreement's failure-mode axis. Do not cross it without asking.
-- **No comments in code written by Jacob.** Explain in chat, not in source.
+- **Ownership is marked per task as [JACOB] or [SUPPORT].** The split follows the working agreement's failure-mode axis. Do not cross it without asking.
+- **No comments in support code.** Explain in chat, not in source.
 - C style follows blueprint R5: declarations at the top of a block, explicit comparisons, no unchecked pointer arithmetic across object boundaries (R4).
 - These must be green before every commit: `make test`, `make kernel`. `make crash-test` must be green before Tasks 1, 5, and 8 are considered done (they touch boot and interrupts).
 - Commit at every green state (R7). Small commits.
@@ -28,16 +28,16 @@
 | `kernel/arch/isr.S` | Add `FXSAVE`/`FXRSTOR`, add `isr_simd_error` | JACOB |
 | `kernel/arch/idt.c` | Register vector 19 | JACOB |
 | `kernel/arch/interrupts.c` | Name vector 19 | JACOB |
-| `kernel/wasm/shim/*.c,*.h` | The missing C library | JACOB |
-| `kernel/wasm/platform/*.c,*.h` | WAMR `os_*` surface onto kernel services | JACOB |
-| `kernel/wasm/module_validate.zig` | Structural validation of untrusted module bytes | JACOB |
+| `kernel/wasm/shim/*.c,*.h` | The missing C library | SUPPORT |
+| `kernel/wasm/platform/*.c,*.h` | WAMR `os_*` surface onto kernel services | SUPPORT |
+| `kernel/wasm/module_validate.zig` | Structural validation of untrusted module bytes | SUPPORT |
 | `kernel/wasm/runtime.c,.h` | WAMR lifecycle; registers the host function | JACOB |
 | `kernel/boot/main.c` | Limine module request; calls the runtime | JACOB |
-| `components/hello/hello.zig` | The test module | JACOB |
-| `tools/hosted/test_wasm_shim.c` | Shim tests | JACOB |
-| `tools/hosted/fuzz_wasm_shim.c` | Shim fuzzer | JACOB |
-| `tools/hosted/test_wasm_module.c` | Validator tests | JACOB |
-| `tools/hosted/fuzz_wasm_module.c` | Validator fuzzer | JACOB |
+| `components/hello/hello.zig` | The test module | SUPPORT |
+| `tools/hosted/test_wasm_shim.c` | Shim tests | SUPPORT |
+| `tools/hosted/fuzz_wasm_shim.c` | Shim fuzzer | SUPPORT |
+| `tools/hosted/test_wasm_module.c` | Validator tests | SUPPORT |
+| `tools/hosted/fuzz_wasm_module.c` | Validator fuzzer | SUPPORT |
 
 ---
 
@@ -53,7 +53,7 @@ Nothing in this slice compiles until this lands — a function returning `double
 - Modify: `kernel/arch/interrupts.c:22`
 - Modify: `kernel/boot/main.c` (stack request, float self-test)
 - Modify: `Makefile` (drop `-mno-sse*`, drop the Zig `-mcpu` override, add `start.o`)
-- Modify: `project documentation` (delete the now-wrong `grep -c xmm` instruction)
+- Modify: `docs/devlog.md` (delete the now-wrong `grep -c xmm` instruction)
 
 **Interfaces:**
 - Produces: `_start` (kernel entry symbol, replaces `kmain` in the linker script). Nothing else consumes this task by name; everything consumes it by *being able to use floating point at all*.
@@ -300,7 +300,7 @@ make crash-test
 
 Expected: 1,003 hosted checks pass; crash test passes 25 cycles. The crash test matters here specifically because this task changed the interrupt path that the virtio driver's polling loop runs under.
 
-- [ ] **Step 14: Remove the now-wrong instruction from project documentation**
+- [ ] **Step 14: Remove the now-wrong instruction from docs/devlog.md**
 
 Delete this paragraph, which is now actively misleading:
 
@@ -327,13 +327,13 @@ not itself use it — that is why `linker.ld` says `ENTRY(_start)`, not
 ```bash
 git add kernel/boot/start.S kernel/boot/linker.ld kernel/arch/isr.S \
         kernel/arch/idt.c kernel/arch/interrupts.c kernel/boot/main.c \
-        Makefile project documentation
+        Makefile docs/devlog.md
 git commit -m "Enable SSE kernel-wide, save FPU state on interrupt"
 ```
 
 ---
 
-## Task 2 [JACOB]: The libc shim, hosted-tested
+## Task 2 [SUPPORT]: The libc shim, hosted-tested
 
 **Files:**
 - Create: `kernel/wasm/shim/string.c`, `stdlib.c`, `stdio.c`, `math.c`
@@ -445,7 +445,7 @@ git commit -m "libc shim for WAMR, with hosted tests and a snprintf fuzzer"
 
 ---
 
-## Task 3 [JACOB]: Zig module pre-validator
+## Task 3 [SUPPORT]: Zig module pre-validator
 
 **Files:**
 - Create: `kernel/wasm/module_validate.zig`
@@ -516,7 +516,7 @@ git commit -m "Zig structural validator for WASM module bytes"
 
 ---
 
-## Task 4 [JACOB]: The test module
+## Task 4 [SUPPORT]: The test module
 
 **Files:**
 - Create: `components/hello/hello.zig`
@@ -706,11 +706,11 @@ git commit -m "Load the WASM module from Limine and pre-validate it"
 > honestly be written yet: the curated file list and the exact `os_*` surface
 > depend on the layout of WAMR's source tree, which nobody here has read
 > because it is not vendored. Writing plausible-looking file lists from memory
-> would be worse than admitting the gap. Both tasks are Jacob's; the detail
+> would be worse than admitting the gap. Both tasks are support work; the detail
 > gets filled in against the real tree at Step 1 of Task 6, before any of it is
 > implemented.
 
-## Task 6 [JACOB]: Vendor WAMR and integrate the build
+## Task 6 [SUPPORT]: Vendor WAMR and integrate the build
 
 **Files:**
 - Modify: `Makefile`
@@ -726,7 +726,7 @@ Build configuration per spec D3.5: `WASM_ENABLE_INTERP=1`, `FAST_INTERP=0`, `AOT
 - [x] **Step 4: Build to a linkable archive; resolve missing symbols by extending the file list or Task 2's shim**
 - [x] **Step 5: Commit**
 
-> If the environment has no network access, Step 1 is Jacob's to run; everything after it is Jacob's.
+> If the environment has no network access, Step 1 is Jacob's to run; everything after it is support work.
 
 **Done 2026-07-31 (commit `8bb4a9ed`).** Pinned `WAMR-2.4.5`, sha256
 `1ab09d51099f276ca4a1d6629f6b589aab2bd0caa01445e05031a4bed22c199b`. Vendored
@@ -757,7 +757,7 @@ original assignment expands to nothing and silently links a WAMR-less kernel.
 
 ---
 
-## Task 7 [JACOB]: WAMR platform port
+## Task 7 [SUPPORT]: WAMR platform port
 
 **Files:**
 - Create: `kernel/wasm/platform/platform_init.c`, `platform_internal.h`
@@ -921,4 +921,4 @@ git commit -m "Run a WASM module in the kernel through WAMR"
 - Serial log shows `hello from a WebAssembly module` produced by the module itself.
 - `make test`, `make kernel`, `make crash-test` all green.
 - Heap usage returns to its pre-run value after teardown.
-- Devlog entry written; project documentation current-state section updated.
+- Devlog entry written; docs/devlog.md current-state section updated.

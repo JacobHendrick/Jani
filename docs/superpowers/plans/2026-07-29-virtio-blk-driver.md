@@ -6,14 +6,13 @@ mid-write, reboot, recover with all checksums valid; snapshot, mutate, roll
 back, show the old state.
 
 **Who writes this:** Jacob. This is the first driver, and per the working
-agreement the first instance of a pattern sets the house style. Jacob wrote
+agreement the first instance of a pattern sets the house style. Support work produced
 this plan and will write the hosted virtqueue harness and Makefile wiring once
 the signatures below are settled, then review.
 
 **Status: IMPLEMENTED 2026-07-29.** Both decisions below were resolved as
 modern + polled, and all six stages are written and verified in QEMU (format,
-put, snapshot, mutate, rollback, and a clean remount on a second boot). Jacob
-wrote it at Jacob's direction, waiving the first-driver rule for this one; it
+put, snapshot, mutate, rollback, and a clean remount on a second boot). Support work produced it at Jacob's direction, waiving the first-driver rule for this one; it
 still wants review and hardware verification. The prose below is kept as the
 design record. One thing the plan did not predict: the kernel had never
 enabled SSE, and the first struct-by-value call into the store took a #UD --
@@ -275,5 +274,5 @@ silently.
 `make test` and `make kernel` must stay green throughout — the store code
 itself does not change, so any hosted regression means a stage leaked into it.
 
-Jacob cannot verify any of this. Every stage needs you to run it, and QEMU
+This requires manual verification. Every stage needs you to run it, and QEMU
 agreeing is not the same as hardware agreeing.

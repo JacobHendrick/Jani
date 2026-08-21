@@ -191,8 +191,8 @@ makes a later third language an addition rather than a rewrite.
 idl/syscalls.idl          Jacob    the twelve calls, post-D3.11
 idl/records.idl           Jacob    the four on-disk layouts
 
-tools/idlc/               Jacob   lexer -> parser -> AST -> emitters
-tools/hosted/test_idlc.c  Jacob   parser and emitter unit tests
+tools/idlc/               Support   lexer -> parser -> AST -> emitters
+tools/hosted/test_idlc.c  Support   parser and emitter unit tests
 
 sdk/zig/jani.zig          generated
 sdk/c/jani.h              generated
@@ -245,10 +245,10 @@ passing gate and a negative gate behind it.
 format, and the D3.11 revision is an ABI change; both fall on the
 silent-failure side of the split.
 
-**Jacob** — `tools/idlc`, its tests, the emitters, the negative gate, and the
+**Support work** — `tools/idlc`, its tests, the emitters, the negative gate, and the
 build wiring. Spec-driven transcription with loud failures.
 
-**Jacob reviews** all of it, including the grammar.
+**Review covers** all of it, including the grammar.
 
 ## Risks
 
