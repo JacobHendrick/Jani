@@ -79,3 +79,9 @@ make zero-install-test
 - `jani-os-blueprint.txt`: long-term architecture and phase plan
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) before proposing a large change.
+
+## License
+
+Jani's original source is licensed under `GPL-2.0-only`. See
+[LICENSE](LICENSE). Files under `third_party/` remain under their respective
+upstream licenses.
