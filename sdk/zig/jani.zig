@@ -6,6 +6,8 @@ extern "env" fn jani_object_read(slot: i32, offset: u32, buffer_ptr: [*]u8, buff
 extern "env" fn jani_object_write(slot: i32, offset: u32, buffer_ptr: [*]const u8, buffer_len: u32) i32;
 extern "env" fn jani_object_size(slot: i32) i64;
 extern "env" fn jani_cap_drop(slot: i32) i32;
+extern "env" fn jani_cap_derive(parent: i32, rights: u32, badge: u32) i32;
+extern "env" fn jani_cap_revoke(slot: i32) i32;
 extern "env" fn jani_message_send(target: i32, payload_ptr: [*]const u8, payload_len: u32, capability: i32) i32;
 extern "env" fn jani_message_recv(buffer_ptr: [*]u8, buffer_len: u32, capability_out: ?*i32) i32;
 extern "env" fn jani_timer_set(delay_ticks: u64) i32;
@@ -35,6 +37,14 @@ pub fn object_size(slot: i32) i64 {
 
 pub fn cap_drop(slot: i32) i32 {
     return jani_cap_drop(slot);
+}
+
+pub fn cap_derive(parent: i32, rights: u32, badge: u32) i32 {
+    return jani_cap_derive(parent, rights, badge);
+}
+
+pub fn cap_revoke(slot: i32) i32 {
+    return jani_cap_revoke(slot);
 }
 
 pub fn message_send(target: i32, payload: []const u8, capability: i32) i32 {

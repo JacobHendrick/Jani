@@ -7,9 +7,10 @@
 _start:
     movq %rsp, kernel_stack_top(%rip)
 
+    # Enable supervisor write protection while configuring SSE state.
     movq %cr0, %rax
     andq $-13, %rax
-    orq $2, %rax
+    orq $0x10002, %rax
     movq %rax, %cr0
 
     movq %cr4, %rax

@@ -11,6 +11,8 @@ int32_t jani_object_read(int32_t slot, uint32_t offset, uint32_t buffer_ptr, uin
 int32_t jani_object_write(int32_t slot, uint32_t offset, uint32_t buffer_ptr, uint32_t buffer_len);
 int64_t jani_object_size(int32_t slot);
 int32_t jani_cap_drop(int32_t slot);
+int32_t jani_cap_derive(int32_t parent, uint32_t rights, uint32_t badge);
+int32_t jani_cap_revoke(int32_t slot);
 int32_t jani_message_send(int32_t target, uint32_t payload_ptr, uint32_t payload_len, int32_t capability);
 int32_t jani_message_recv(uint32_t buffer_ptr, uint32_t buffer_len, uint32_t capability_out);
 int32_t jani_timer_set(uint64_t delay_ticks);

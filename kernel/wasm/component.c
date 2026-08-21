@@ -326,7 +326,9 @@ int component_mailbox_push(
     uint32_t header[2];
     uint32_t needed;
 
-    if ((component == NULL) || ((length != 0) && (bytes == NULL))) {
+    if ((component == NULL) || ((length != 0) && (bytes == NULL)) ||
+        (component->mailbox_used > COMPONENT_MAILBOX_BYTES) ||
+        (length > COMPONENT_MAILBOX_BYTES - (uint32_t)sizeof(header))) {
         return 0;
     }
 
@@ -364,18 +366,20 @@ int component_mailbox_pop(
         return 0;
     }
 
-    if (component->mailbox_used < sizeof(header)) {
+    if ((component->mailbox_used > COMPONENT_MAILBOX_BYTES) ||
+        (component->mailbox_used < sizeof(header))) {
         return 0;
     }
 
     memcpy(header, component->mailbox, sizeof(header));
-    frame = (uint32_t)sizeof(header) + header[0];
-
-    if ((frame > component->mailbox_used) || (header[0] > capacity)) {
+    if ((header[0] > component->mailbox_used - (uint32_t)sizeof(header)) ||
+        (header[0] > capacity) ||
+        ((header[0] != 0) && (bytes_out == NULL))) {
         return 0;
     }
+    frame = (uint32_t)sizeof(header) + header[0];
 
-    if ((header[0] != 0) && (bytes_out != NULL)) {
+    if (header[0] != 0) {
         memcpy(bytes_out, component->mailbox + sizeof(header), header[0]);
     }
 

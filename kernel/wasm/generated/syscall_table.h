@@ -7,6 +7,8 @@ static NativeSymbol jani_symbols[] = {
     { "jani_object_write", (void *)jani_object_write_impl, "(iiii)i", NULL },
     { "jani_object_size", (void *)jani_object_size_impl, "(i)I", NULL },
     { "jani_cap_drop", (void *)jani_cap_drop_impl, "(i)i", NULL },
+    { "jani_cap_derive", (void *)jani_cap_derive_impl, "(iii)i", NULL },
+    { "jani_cap_revoke", (void *)jani_cap_revoke_impl, "(i)i", NULL },
     { "jani_message_send", (void *)jani_message_send_impl, "(iiii)i", NULL },
     { "jani_message_recv", (void *)jani_message_recv_impl, "(iii)i", NULL },
     { "jani_timer_set", (void *)jani_timer_set_impl, "(I)i", NULL },

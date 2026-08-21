@@ -1,69 +1,81 @@
 # Jani OS
 
-A from-scratch, next-generation operating system built around five pillars:
+Jani is an experimental x86_64 operating system built to explore persistent
+objects, capability-based access control, and WebAssembly components.
 
-1. **Orthogonal persistence** — no files, no "save"; all state lives in a
-   versioned object store and survives power-off. Running programs resume
-   exactly where they were.
-2. **Zero-trust hardware** — everything encrypted at rest and in flight,
-   measured boot, designed for confidential-computing hardware.
-3. **Distributed compute** — many devices, one computer; running programs
-   migrate between machines mid-execution.
-4. **Semantic intelligence** — the OS indexes what data *means*; queries by
-   similarity, not by path.
-5. **Intent-based UI** — no apps; disposable micro-runtimes composed on one
-   canvas to fulfill what the user asks for.
+This repository is a learning project. It boots in QEMU and has working
+kernel subsystems, but it is not ready to protect real data or run untrusted
+code.
 
-Plus eighteen upgrades (time-travel snapshots, capability security,
-sandboxed drivers, provenance ledger, live collaboration, hot-swap
-components, and more) riding on three substrates: the persistent object
-store, capabilities, and WASM components.
+## Current State
 
-## Languages
+The current kernel includes:
 
-- **C** — small privileged kernel trunk (built with `zig cc`)
-- **Zig** — kernel trust boundaries and the primary language for system
-  services, desktop/UI components, applications, and the official SDK
-- **WASM** — the ABI for everything above the kernel (WAMR, interpreter mode)
-- ~300 lines of x86_64 assembly, total
+- Limine boot on BIOS and UEFI
+- serial diagnostics, CPU exceptions, PIC, PIT, and PS/2 keyboard input
+- physical and virtual memory managers plus a kernel heap
+- a log-structured persistent object store on a VirtIO block device
+- capability tables with derivation and revocation
+- WAMR 2.4.5 in classic interpreter mode
+- a generated C and Zig syscall ABI
+- persistent WASM component state and bounded component mailboxes
+- hosted tests, fuzz targets, a TLA+ model, and QEMU boot checks
 
-Zig expands with the project: it is the C toolchain in Phase 0, begins
-providing native safety-boundary modules in Phase 2, targets WASM for services
-and applications from Phase 3 onward, and implements the compositor, widget
-renderer, and intent-driven desktop in Phase 8. No Odin toolchain or Odin SDK
-is planned; components previously assigned to Odin will be written in Zig.
+WASM components currently execute through WAMR inside the kernel address
+space. They are separated by runtime checks, not by x86 privilege rings or
+separate page tables. Read [SECURITY.md](SECURITY.md) before testing modules
+you did not write.
 
-## Where everything is
+## Project Direction
 
-- **`jani-os-blueprint.txt`** — the complete blueprint: architecture, all
-  eleven phases, milestones, reading lists. This is the map for the whole
-  project. Read Part 2 (architecture) and Part 4 (C discipline) before
-  writing anything.
-- **`START-HERE.txt`** — the concrete first-session checklist for Phase 0.
-- **`docs/devlog.md`** — the development log. One entry per session; your
-  future self debugging Phase 5 will thank present you.
-- Directory layout follows Part 7 of the blueprint and grows one phase at a
-  time. Phase 0's boot, architecture, driver, and kernel-library code is live.
+The long-term design is described in [jani-os-blueprint.txt](jani-os-blueprint.txt).
+Planned work includes scheduling, replay, component replacement, distribution,
+semantic indexing, a graphical desktop, compatibility layers, and hardware
+support. Those features are goals, not current security or compatibility
+claims.
 
-## Verification Commands
+C is used for low-level kernel code. Zig provides checked boundary modules,
+the component SDK, and WASM applications. Small x86_64 assembly files handle
+CPU entry and interrupt transitions.
 
-- `make test` — run hosted PMM and heap tests under ASan/UBSan
-- `make fuzz-heap` — run the bounded randomized heap fuzz campaign
-- `make model-check` — prove the current WAL model satisfies its invariants
-- `make model-check-negative` — prove TLC breaks all seeded protocol mutants
-- `make zero-install-test` — install a component, then resume it from an ISO
-  that contains no Wasm module
+## Build
 
-## Status
+The supported development host is Fedora x86_64. The build expects:
 
-- [x] Phase 0 — bare-metal on-ramp (boot, print, interrupts)
-- [x] Phase 1 — memory & the single address space
-- [x] Phase 2 — persistent object store
-- [x] Phase 3 — WASM runtime as userspace  ← the "wow" demo lives here
-- [ ] Phase 4 — capabilities, scheduler, replay, hot-swap
-- [ ] Phase 5 — distribution
-- [ ] Phase 6 — semantic layer
-- [ ] Phase 7 — zero-trust hardening
-- [ ] Phase 8 — intent UI
-- [ ] Phase 9 — Linux ABI & the app ecosystem  ← Chromium runs here
-- [ ] Phase 10 — real hardware & real users  ← the consumer milestone
+- Zig 0.16.0 at `third_party/zig/zig`
+- vendored Limine 12.4.0 at `third_party/limine/`
+- `make`, `ld`, `xorriso`, and `qemu-system-x86_64`
+
+Run:
+
+```sh
+make check-tools
+make test
+make iso
+make run
+```
+
+`make run` starts QEMU with serial output attached to the terminal. Use
+`Ctrl-a x` to exit QEMU.
+
+Useful additional checks:
+
+```sh
+make verify-wamr
+make fuzz-heap
+make model-check
+make model-check-negative
+make zero-install-test
+```
+
+## Repository Guide
+
+- `kernel/`: kernel, architecture, drivers, memory, objects, and WASM runtime
+- `components/`: Zig WASM components used by the boot demo
+- `sdk/`: generated and hand-written C and Zig component interfaces
+- `idl/`: syscall interface definitions
+- `tools/`: generators, hosted tests, fuzzing, and model-checking support
+- `docs/devlog.md`: verified checkpoints and debugging notes
+- `jani-os-blueprint.txt`: long-term architecture and phase plan
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) before proposing a large change.

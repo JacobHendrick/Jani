@@ -16,9 +16,11 @@
 #include "../mm/vmm.h"
 #include "../obj/object_store.h"
 #include "../wasm/component.h"
+#include "../wasm/component_set.h"
 #include "../wasm/instance_state.h"
 #include "../wasm/module.h"
 #include "../wasm/runtime.h"
+#include "../wasm/syscalls.h"
 #include "../arch/stack.h"
 
 #define LIMINE_REQUESTS_START_MARKER { 0xf6b8f4b39de7d1ae, 0xfab91a6940fcb9cf, \
@@ -502,6 +504,7 @@ static int run_store_demo(void) {
 #define JANI_WOW_BUG_LOSE_MEMORY 3
 
 static struct component demo_component;
+static struct component_set demo_components;
 static int demo_component_ready;
 
 static int run_component_leak_test(
@@ -551,6 +554,9 @@ static int run_component_demo(void) {
     if (!jani_wasm_runtime_start()) {
         return 0;
     }
+
+    component_set_init(&demo_components);
+    jani_syscall_set_component_set(&demo_components);
 
     if (component_registry_load(
             &demo_store,
@@ -636,6 +642,12 @@ static int run_component_demo(void) {
         }
 
         kputs("component: initialized\n");
+    }
+
+    if (!component_set_add(&demo_components, &demo_component)) {
+        kputs("ERROR: could not register running component\n");
+        component_release(&demo_component);
+        return 0;
     }
 
     demo_component_ready = 1;

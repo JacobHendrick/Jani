@@ -3,6 +3,7 @@
 #include "wasm_export.h"
 
 #include "component.h"
+#include "component_set.h"
 #include "syscall_args.h"
 #include "../lib/printk.h"
 #include "../lib/string.h"
@@ -12,9 +13,14 @@
 #define SYSCALL_TRANSFER_MAX 4096u
 
 static struct component *current;
+static struct component_set *running_components;
 
 void jani_syscall_set_current(struct component *component) {
     current = component;
+}
+
+void jani_syscall_set_component_set(struct component_set *set) {
+    running_components = set;
 }
 
 struct component *jani_syscall_current(void) {
@@ -82,6 +88,10 @@ static int32_t jani_log_impl(
 ) {
     const uint8_t *text;
     uint32_t index;
+
+    if (length > SYSCALL_TRANSFER_MAX) {
+        return JANI_EINVAL;
+    }
 
     text = linear_memory(exec_env, offset, length);
     if (text == NULL) {
@@ -161,6 +171,9 @@ static int32_t jani_object_read_impl(
     size_t payload_size;
     uint32_t clamped;
 
+    if (length > SYSCALL_TRANSFER_MAX) {
+        return JANI_EINVAL;
+    }
     if (!slot_object(slot, &id)) {
         return JANI_EINVAL;
     }
@@ -283,10 +296,85 @@ static int32_t jani_cap_drop_impl(wasm_exec_env_t exec_env, int32_t slot) {
         return JANI_EINVAL;
     }
 
-    memset(&current->capability_table.slots[slot], 0,
-           sizeof(current->capability_table.slots[slot]));
-    current->capability_table.parents[slot] = COMPONENT_CAP_PARENT_NONE;
-    current->capabilities_dirty = 1;
+    if (!component_capability_revoke(current, (uint32_t)slot)) {
+        return JANI_EINVAL;
+    }
+
+    return 0;
+}
+
+static int32_t jani_cap_derive_impl(
+    wasm_exec_env_t exec_env,
+    int32_t parent_slot,
+    uint32_t child_rights,
+    uint32_t child_badge
+) {
+    const struct capability *parent;
+    uint32_t child_slot;
+
+    (void)exec_env;
+
+    if ((current == NULL) ||
+        !jani_syscall_check_slot(current->capability_count, parent_slot)) {
+        return JANI_EINVAL;
+    }
+
+    parent = capability_table_get(
+        &current->capability_table,
+        (uint32_t)parent_slot
+    );
+    if (parent == NULL) {
+        return JANI_EINVAL;
+    }
+
+    if (!capability_allows(parent, CAP_RIGHT_GRANT) ||
+        (child_rights == 0) ||
+        ((child_rights & ~CAP_RIGHT_ALL) != 0) ||
+        ((child_rights & parent->rights) != child_rights)) {
+        return JANI_EPERM;
+    }
+
+    if (!component_capability_derive(
+            current,
+            (uint32_t)parent_slot,
+            child_rights,
+            child_badge,
+            &child_slot)) {
+        return JANI_ENOSPC;
+    }
+
+    return (int32_t)child_slot;
+}
+
+static int32_t jani_cap_revoke_impl(
+    wasm_exec_env_t exec_env,
+    int32_t slot
+) {
+    const struct capability *capability;
+
+    (void)exec_env;
+
+    if ((current == NULL) ||
+        !jani_syscall_check_slot(current->capability_count, slot)) {
+        return JANI_EINVAL;
+    }
+
+    capability = capability_table_get(
+        &current->capability_table,
+        (uint32_t)slot
+    );
+    if (capability == NULL) {
+        return JANI_EINVAL;
+    }
+
+    if (!capability_allows(capability, CAP_RIGHT_GRANT)) {
+        return JANI_EPERM;
+    }
+
+    if (!component_capability_revoke(current, (uint32_t)slot)) {
+        return JANI_EINVAL;
+    }
+
     return 0;
 }
 
@@ -297,6 +385,7 @@ static int32_t jani_message_send_impl(
     uint32_t length,
     int32_t capability
 ) {
+    struct component *recipient;
     struct object_id id;
     const uint8_t *source;
 
@@ -313,9 +402,23 @@ static int32_t jani_message_send_impl(
                                           capability)) {
         return JANI_EINVAL;
     }
+    if ((capability >= 0) &&
+        (capability_table_get(&current->capability_table,
+                              (uint32_t)capability) == NULL)) {
+        return JANI_EINVAL;
+    }
 
-    if (!object_id_equal(id, current->root_id)) {
-        return JANI_ENOENT;
+    if (object_id_equal(id, current->root_id)) {
+        recipient = current;
+    } else {
+        recipient = component_set_find(running_components, id);
+        if (recipient == NULL) {
+            return JANI_ENOENT;
+        }
+
+        if (capability >= 0) {
+            return JANI_EPERM;
+        }
     }
 
     source = linear_memory(exec_env, pointer, length);
@@ -323,7 +426,7 @@ static int32_t jani_message_send_impl(
         return JANI_ERANGE;
     }
 
-    if (!component_mailbox_push(current, source, length, capability)) {
+    if (!component_mailbox_push(recipient, source, length, capability)) {
         return JANI_ENOSPC;
     }
 
@@ -349,26 +452,29 @@ static int32_t jani_message_recv_impl(
         return JANI_EINVAL;
     }
 
-    if (!component_mailbox_pop(current, staging, length, &received,
-                              &capability)) {
-        return JANI_EAGAIN;
-    }
-
-    destination = linear_memory(exec_env, pointer, received);
+    destination = linear_memory(exec_env, pointer, length);
     if (destination == NULL) {
         return JANI_ERANGE;
     }
 
-    if (received != 0) {
-        memcpy(destination, staging, received);
-    }
-
+    capability_slot = NULL;
     if (capability_out != 0) {
         capability_slot = linear_memory(exec_env, capability_out,
                                         (uint32_t)sizeof(int32_t));
         if (capability_slot == NULL) {
             return JANI_ERANGE;
         }
+    }
+
+    if (!component_mailbox_pop(current, staging, length, &received,
+                              &capability)) {
+        return JANI_EAGAIN;
+    }
+
+    if (received != 0) {
+        memcpy(destination, staging, received);
+    }
+    if (capability_slot != NULL) {
         memcpy(capability_slot, &capability, sizeof(capability));
     }
 

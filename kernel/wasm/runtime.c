@@ -20,10 +20,13 @@ _Static_assert(WASM_ENABLE_AOT == 0,
 _Static_assert(WASM_ENABLE_FAST_INTERP == 0,
                "determinism contract assumes the classic interpreter's "
                "float lowering; fast-interp has its own");
+_Static_assert(WASM_ENABLE_INSTRUCTION_METERING == 1,
+               "untrusted components must have a finite instruction budget");
 
 #define JANI_WASM_STACK_SIZE  (64 * 1024)
 #define JANI_WASM_HEAP_SIZE   (16 * 1024)
 #define JANI_WASM_ERROR_SIZE 128
+#define JANI_WASM_INSTRUCTION_LIMIT 10000000
 
 static void *jani_wasm_walloc(unsigned int size) {
     return kmalloc((size_t)size);
@@ -233,6 +236,10 @@ int jani_wasm_instance_call(void *instance, void *exec_env, const char *name) {
         return 0;
     }
 
+    wasm_runtime_set_instruction_count_limit(
+        (wasm_exec_env_t)exec_env,
+        JANI_WASM_INSTRUCTION_LIMIT
+    );
     if (!wasm_runtime_call_wasm((wasm_exec_env_t)exec_env, function, 0, NULL)) {
         printk("ERROR: wamr: call '%s' failed: %s\n", name,
                wasm_runtime_get_exception((wasm_module_inst_t)instance));
@@ -302,6 +309,10 @@ int jani_wasm_run_module(const uint8_t *bytes, size_t length) {
         goto teardown;
     }
 
+    wasm_runtime_set_instruction_count_limit(
+        exec_env,
+        JANI_WASM_INSTRUCTION_LIMIT
+    );
     if (!wasm_runtime_call_wasm(exec_env, run_function, 0, NULL)) {
         printk("ERROR: wamr: call 'run' failed: %s\n",
                wasm_runtime_get_exception(instance));

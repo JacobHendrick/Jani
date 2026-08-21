@@ -864,4 +864,65 @@ Gates: `make test` passes 8,929 checks, the focused mailbox/capability test
 passes 72 checks, the persistence/uninstall test passes 38 checks, and `make
 kernel` links.
 
+## 2026-08-11 (Phase 4) — Capability controls cross the WASM boundary
+
+Added `cap_derive` and `cap_revoke` to the syscall IDL, then regenerated the
+C SDK, Zig SDK, and kernel dispatch table. Components can now create a weaker
+child capability only when the parent owns `GRANT`; unknown rights, empty
+rights, and attempts to gain rights are rejected. Revoking a capability clears
+that slot and all of its descendants. `cap_drop` now uses the same recursive
+revocation path so it cannot leave usable children behind.
+
+The counter component's boot smoke test exercises the complete guest-to-kernel
+path: derive a read-only child, read through it, reject a write, reject rights
+amplification, revoke the parent, and prove the child no longer works. It also
+checks that dropping a capability makes its slot unusable.
+
+Gates: `make test` passes 8,946 checks, `make kernel`, `make iso`, and the
+counter WASM build pass, generated IDL files match, and all 3 malformed-IDL
+tests are rejected. A live QEMU boot reports every capability syscall check as
+successful with no syscall failure or kernel error.
+
+## 2026-08-15 (Phase 4) — Running components gain a routing directory
+
+Added a bounded in-memory component set with add, lookup, removal, duplicate
+rejection, and slot reuse. The boot path registers each live component by root
+ID, and the syscall layer can now resolve a message target to its recipient.
+
+Message payloads may route to another registered component. Cross-component
+capability attachment is intentionally rejected for now: a sender's local slot
+number is not valid in the receiver's table, and enabling it safely requires
+the upcoming global derivation record. Initialization-time self-messages keep
+their direct path so a component can message itself before registration.
+
+Gates: the new hosted sanitizer test passes 35 checks, `make test` passes 8,981
+checks, `make kernel` and `make iso` pass, and a live QEMU boot completes all
+self-message checks and reaches counter 79 without syscall or kernel errors.
+
+## 2026-08-21 (Phase 4) - Public repository security pass
+
+Audited the current code and documentation before publishing the repository.
+The README now separates working features from roadmap goals, and
+`SECURITY.md` records the current trust model: WASM executes through WAMR in
+Ring 0, so runtime validation is not equivalent to hardware process isolation.
+`CONTRIBUTING.md` asks contributors to keep changes focused, test failure
+paths, and take responsibility for every submitted line.
+
+Enabled WAMR instruction metering with a ten-million-instruction budget for
+each component entry. Hardened mailbox framing against integer overflow and
+corrupt internal lengths. Message receive now validates guest destinations
+before removing a message, and message send rejects empty capability slots.
+Native logging, object reads, object writes, and message transfers are bounded
+to 4096 bytes per syscall.
+
+The page mapper now enforces W^X for new mappings, its boot self-test verifies
+that writable-executable mappings are rejected, and early boot enables CR0.WP
+so supervisor writes respect read-only page permissions.
+
+Gates: `make test` passes 8,991 checks under ASan/UBSan, `make kernel` and
+`make iso` pass, `make verify-wamr` confirms all 75 vendored files against
+the pinned WAMR 2.4.5 archive, and a two-cycle QEMU run resumes the persistent
+counter from 1 through 30 without kernel errors. The kernel ELF has no RWX
+load segment.
+
 <!-- Next entry goes here -->

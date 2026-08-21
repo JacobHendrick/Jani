@@ -181,6 +181,20 @@ static void test_push_rejects_oversized(void) {
     CHECK(component.mailbox_used == 0);
 }
 
+static void test_push_rejects_wrapped_lengths(void) {
+    uint8_t byte;
+
+    reset();
+    byte = 0;
+
+    CHECK(component_mailbox_push(&component, &byte, UINT32_MAX, -1) == 0);
+    CHECK(component.mailbox_used == 0);
+
+    component.mailbox_used = COMPONENT_MAILBOX_BYTES + 1u;
+    CHECK(component_mailbox_push(&component, &byte, 1, -1) == 0);
+    CHECK(component.mailbox_used == COMPONENT_MAILBOX_BYTES + 1u);
+}
+
 static void test_pop_rejects_small_capacity(void) {
     uint8_t out[2];
     uint32_t length;
@@ -192,6 +206,39 @@ static void test_pop_rejects_small_capacity(void) {
     CHECK(component_mailbox_pop(&component, out, sizeof(out), &length,
                                 &capability) == 0);
     CHECK(component.mailbox_used == 13);
+}
+
+static void test_pop_rejects_corrupt_frames(void) {
+    uint8_t out[16];
+    uint32_t header[2];
+    uint32_t length;
+    int32_t capability;
+
+    reset();
+    header[0] = UINT32_MAX;
+    header[1] = 0;
+    memcpy(component.mailbox, header, sizeof(header));
+    component.mailbox_used = (uint32_t)sizeof(header);
+
+    CHECK(component_mailbox_pop(&component, out, sizeof(out), &length,
+                                &capability) == 0);
+    CHECK(component.mailbox_used == sizeof(header));
+
+    component.mailbox_used = COMPONENT_MAILBOX_BYTES + 1u;
+    CHECK(component_mailbox_pop(&component, out, sizeof(out), &length,
+                                &capability) == 0);
+}
+
+static void test_pop_requires_output_buffer(void) {
+    uint32_t length;
+    int32_t capability;
+
+    reset();
+    CHECK(component_mailbox_push(&component, (const uint8_t *)"x", 1,
+                                 -1) == 1);
+    CHECK(component_mailbox_pop(&component, NULL, 1, &length,
+                                &capability) == 0);
+    CHECK(component.mailbox_used == 9);
 }
 
 static void test_capability_slots(void) {
@@ -338,7 +385,10 @@ int main(void) {
     test_zero_length_message();
     test_push_respects_capacity();
     test_push_rejects_oversized();
+    test_push_rejects_wrapped_lengths();
     test_pop_rejects_small_capacity();
+    test_pop_rejects_corrupt_frames();
+    test_pop_requires_output_buffer();
     test_capability_slots();
     test_dropped_slot_is_reused();
     test_capability_table_is_bounded();

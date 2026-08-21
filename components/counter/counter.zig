@@ -5,6 +5,8 @@ const PROBE_BYTES: u32 = 64;
 
 const JANI_EINVAL: i32 = -1;
 const JANI_ERANGE: i32 = -5;
+const CAP_RIGHT_READ: u32 = 0x01;
+const CAP_RIGHT_ALL: u32 = 0x0f;
 
 var counter: u64 = 0;
 
@@ -85,8 +87,23 @@ fn probe_objects() void {
     check("object_write bounds", jani.object_write(slot, 60, &written) == JANI_ERANGE);
     check("object_read past end", jani.object_read(slot, 0xFFFFFFFF, &read_back) == JANI_ERANGE);
     check("object_write past end", jani.object_write(slot, 0xFFFFFFFF, &written) == JANI_ERANGE);
-    check("cap_drop", jani.cap_drop(slot) == 0);
-    check("dropped slot rejected", jani.object_size(slot) < 0);
+
+    const child = jani.cap_derive(slot, CAP_RIGHT_READ, 42);
+    check("cap_derive", child >= 0);
+    if (child >= 0) {
+        check("derived read", jani.object_size(child) == @as(i64, PROBE_BYTES));
+        check("derived write denied", jani.object_write(child, 0, &written) < 0);
+    }
+    check("cap amplification denied", jani.cap_derive(slot, CAP_RIGHT_ALL, 0) < 0);
+    check("cap_revoke", jani.cap_revoke(slot) == 0);
+    check("revoked child rejected", child < 0 or jani.object_size(child) < 0);
+
+    const drop_slot = jani.object_create(0, 8, 1);
+    check("second object_create", drop_slot >= 0);
+    if (drop_slot >= 0) {
+        check("cap_drop", jani.cap_drop(drop_slot) == 0);
+        check("dropped slot rejected", jani.object_size(drop_slot) < 0);
+    }
 }
 
 fn probe_messages() void {

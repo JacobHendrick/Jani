@@ -228,7 +228,9 @@ int vmm_map_page(uint64_t virtual_address, uint64_t physical_address,
 
     if (((virtual_address & PAGE_OFFSET_MASK) != 0) ||
         ((physical_address & PAGE_OFFSET_MASK) != 0) ||
-        ((physical_address & ~PAGE_ADDRESS_MASK) != 0)) {
+        ((physical_address & ~PAGE_ADDRESS_MASK) != 0) ||
+        (((flags & VMM_PAGE_WRITABLE) != 0) &&
+         ((flags & VMM_PAGE_NO_EXECUTE) == 0))) {
         return 0;
     }
 
@@ -291,8 +293,17 @@ int vmm_self_test(void) {
         return 0;
     }
 
+    if (vmm_map_page(VMM_TEST_VIRTUAL_ADDRESS, physical_address,
+                     VMM_PAGE_WRITABLE)) {
+        unmapped_address = vmm_unmap_page(VMM_TEST_VIRTUAL_ADDRESS);
+        if (unmapped_address != 0) {
+            pmm_free_frame(unmapped_address);
+        }
+        return 0;
+    }
+
     if (!vmm_map_page(VMM_TEST_VIRTUAL_ADDRESS, physical_address,
-                      VMM_PAGE_WRITABLE)) {
+                      VMM_PAGE_WRITABLE | VMM_PAGE_NO_EXECUTE)) {
         pmm_free_frame(physical_address);
         return 0;
     }
