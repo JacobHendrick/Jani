@@ -28,7 +28,7 @@ you did not write.
 
 ## Project Direction
 
-The long-term design is described in [jani-os-blueprint.txt](jani-os-blueprint.txt).
+The long-term design is described in [docs/architecture/blueprint.md](docs/architecture/blueprint.md).
 Planned work includes scheduling, replay, component replacement, distribution,
 semantic indexing, a graphical desktop, compatibility layers, and hardware
 support. Those features are goals, not current security or compatibility
@@ -75,8 +75,8 @@ make zero-install-test
 - `sdk/`: generated and hand-written C and Zig component interfaces
 - `idl/`: syscall interface definitions
 - `tools/`: generators, hosted tests, fuzzing, and model-checking support
-- `docs/devlog.md`: verified checkpoints and debugging notes
-- `jani-os-blueprint.txt`: long-term architecture and phase plan
+- [`docs/`](docs/README.md): architecture, design records, development notes,
+  formal models, and archived implementation plans
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) before proposing a large change.
 

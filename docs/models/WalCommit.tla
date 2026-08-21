@@ -1,6 +1,6 @@
 ------------------------------ MODULE WalCommit ------------------------------
 (* Sector-level model of the Jani Phase 2 WAL commit/recovery protocol.      *)
-(* Design doc: docs/superpowers/specs/2026-07-15-wal-tla-model-design.md     *)
+(* Design doc: docs/design/2026-07-15-wal-tla-model.md                    *)
 (*                                                                           *)
 (* Disk layout (one model "sector" holds one abstract value):                *)
 (*   <<"sb", 0>>    superblock: WAL slot recovery starts scanning from       *)

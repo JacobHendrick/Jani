@@ -1,0 +1,41 @@
+name: Design proposal
+description: Propose a major subsystem, ABI, persistent format, or trust-boundary change.
+title: "design: "
+labels:
+  - design
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What concrete limitation or failure does this proposal address?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed design
+      description: Describe the interfaces, data flow, and ownership boundaries.
+    validations:
+      required: true
+  - type: textarea
+    id: invariants
+    attributes:
+      label: Invariants and security impact
+      description: State what must remain true and how trust boundaries change.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: What other approaches were considered, and why were they rejected?
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification plan
+      description: List hosted tests, negative tests, model checks, and QEMU checks.
+    validations:
+      required: true

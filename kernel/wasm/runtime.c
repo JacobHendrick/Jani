@@ -16,7 +16,7 @@ _Static_assert(WASM_ENABLE_JIT == 0,
                "different NaN payloads than the interpreter");
 _Static_assert(WASM_ENABLE_AOT == 0,
                "determinism contract requires AOT off; see "
-               "docs/superpowers/specs/2026-08-03-wow-demo-design.md");
+               "docs/design/2026-08-03-persistent-component-demo.md");
 _Static_assert(WASM_ENABLE_FAST_INTERP == 0,
                "determinism contract assumes the classic interpreter's "
                "float lowering; fast-interp has its own");
