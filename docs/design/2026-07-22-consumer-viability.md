@@ -338,7 +338,7 @@ lines). It must:
 4. Generate the user identity keypair (U8).
 5. Install the bootloader and the D8 recovery entry.
 
-A **pre-flight checker running on Windows or Linux** lets a user learn whether
+A **pre-flight checker running on Windows or Linux** lets a user determine whether
 their PC is supported before burning an ISO.
 
 Published hardware compatibility list with three tiers: **Verified** (owned and

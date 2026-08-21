@@ -1,6 +1,6 @@
 # Contributing
 
-Jani is a learning operating-system project with an evolving design. Small,
+Jani is an open-source operating-system project with an evolving design. Small,
 reviewable changes are easiest to test and explain.
 
 ## Before Coding

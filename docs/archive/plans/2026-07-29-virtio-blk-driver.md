@@ -49,8 +49,8 @@ BAR and about a dozen port accesses — you could have it reading sectors in an
 evening. Modern requires walking the PCI capability list to find structures
 inside MMIO BARs. The recommendation is **modern**: the blueprint says v1.1+,
 legacy is deprecated, and the capability walk is the same shape NVMe needs in
-Phase 4, so it pays twice. Legacy-first as a learning ramp is defensible if
-you throw it away afterward rather than keeping both paths.
+Phase 4, so it pays twice. Legacy-first as an incremental bring-up path is
+defensible if you throw it away afterward rather than keeping both paths.
 
 **Polling or interrupts.** `read_sector` and `write_sector` are synchronous and
 return `int`, so a polled used-ring loop matches the API with no completion

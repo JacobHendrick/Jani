@@ -1,8 +1,8 @@
 # Security Policy
 
-Jani is an experimental operating system. It is suitable for development in
-QEMU with test data. It is not suitable for production use, secrets, or
-hostile workloads.
+Jani is under active development. Current builds are suitable for testing in
+QEMU with non-sensitive data. They are not yet suitable for production use,
+secrets, or hostile workloads.
 
 ## Reporting a Problem
 

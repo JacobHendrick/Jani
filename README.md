@@ -1,11 +1,11 @@
 # Jani OS
 
-Jani is an experimental x86_64 operating system built to explore persistent
+Jani is a free and open-source x86_64 operating system built around persistent
 objects, capability-based access control, and WebAssembly components.
 
-This repository is a open and free project. It boots in QEMU and has working
-kernel subsystems, but it is not ready to protect real data or run untrusted
-code.
+Jani is under active development toward a dependable desktop operating system
+for end users. It boots in QEMU and has working kernel subsystems, but current
+builds are not ready to protect real data or run untrusted code.
 
 ## Current State
 

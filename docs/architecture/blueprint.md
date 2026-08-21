@@ -520,8 +520,8 @@ THE DEVELOPMENT LOOP (from day one until forever)
   edit -> make -> boot QEMU with serial output to your terminal -> printk
   over serial -> for hard bugs, boot QEMU halted with its gdbstub enabled
   and attach gdb to step through kernel source. QEMU can also snapshot VM
-  state, dump memory, and log all interrupts - learn its monitor console
-  early; it is your hardware oscilloscope.
+  state, dump memory, and log all interrupts - become familiar with
+  its monitor console early; it is your hardware oscilloscope.
 
 
 ================================================================================
@@ -633,9 +633,9 @@ to "debug the drivers you already have."
 --------------------------------------------------------------------------------
 PHASE 0 - BARE-METAL ON-RAMP                          (~1,500-3,000 lines C)
 --------------------------------------------------------------------------------
-GOAL: A kernel that boots, prints, and takes interrupts. This phase is pure
-learning - nothing Jani-specific yet - and it is where you internalize the
-machine.
+GOAL: A kernel that boots, prints, and takes interrupts. This phase
+establishes the machine fundamentals that later Jani-specific subsystems
+depend on.
 
 BUILD, IN ORDER:
   1. Toolchain + Limine C template booting "hello" to the Limine framebuffer
@@ -1427,7 +1427,7 @@ stands on. With Phase 9 the honest comparison shifts from "research OS" to
 "research OS that also ships": Fuchsia, Redox, and Twizzler are the peer
 group, and none of them reached consumers on a solo budget.
 
-TIME REALISM (solo, learning as you go): Phase 0-1 are commonly a few months
+TIME REALISM (solo development): Phase 0-1 are commonly a few months
 of evenings. Phase 2 is the longest-feeling phase (crash consistency is
 subtle) - the hosted-first rule R3 is what makes it survivable. Phase 3
 delivers the payoff demo that will recharge you. Phase 9 is the longest
