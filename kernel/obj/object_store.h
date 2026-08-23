@@ -10,6 +10,7 @@
 #define OBJECT_STORE_SECTOR_SIZE 512u
 #define OBJECT_STORE_SNAPSHOT_LIMIT 8u
 #define OBJECT_STORE_CACHE_SLOTS 16u
+#define OBJECT_STORE_PUT_BATCH_MAX 8u
 
 
 struct object_cache_slot {
@@ -35,6 +36,23 @@ struct object_store_snapshot {
     uint64_t table_count;
 };
 
+/* Requests and payload bytes are borrowed only for the duration of a call. */
+struct object_store_put_request {
+    struct object_id id;
+    struct object_id type_id;
+    struct object_id creator_id;
+    struct object_id modifier_id;
+    uint64_t logical_timestamp;
+    const uint8_t *payload;
+    size_t payload_size;
+};
+
+enum object_store_batch_result {
+    OBJECT_STORE_BATCH_REJECTED = 0,
+    OBJECT_STORE_BATCH_COMMITTED = 1,
+    OBJECT_STORE_BATCH_RECOVERY_REQUIRED = 2
+};
+
 struct object_store {
     struct object_store_io io;
     struct object_table table;
@@ -55,6 +73,7 @@ struct object_store {
     uint64_t current_generation;
     uint64_t superblock_sequence;
     uint64_t active_superblock_sector;
+    uint32_t recovery_required;
     struct object_store_snapshot snapshots[OBJECT_STORE_SNAPSHOT_LIMIT];
 };
 
@@ -84,6 +103,20 @@ int object_store_mount(
     size_t bitmap_capacity,
     uint8_t *arena_buffer,
     size_t arena_capacity
+);
+
+/*
+ * Publishes every request through one object-table generation. A
+ * RECOVERY_REQUIRED result quarantines the store until object_store_mount().
+ */
+enum object_store_batch_result object_store_put_many(
+    struct object_store *store,
+    const struct object_store_put_request *requests,
+    size_t request_count
+);
+
+int object_store_requires_recovery(
+    const struct object_store *store
 );
 
 int object_store_put(

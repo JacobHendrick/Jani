@@ -42,6 +42,14 @@ struct disk_table_entry {
     uint8_t padding[456];
 };
 
+struct object_store_staged_put {
+    const struct object_store_put_request *request;
+    uint64_t first_sector;
+    uint64_t sector_count;
+    uint64_t version;
+    size_t object_byte_count;
+};
+
 _Static_assert(
     sizeof(struct disk_superblock) == OBJECT_STORE_SECTOR_SIZE,
     "object-store superblocks must occupy exactly one sector"
@@ -810,6 +818,310 @@ int object_store_mount(
     return 1;
 }
 
+int object_store_requires_recovery(
+    const struct object_store *store
+) {
+    if (store == NULL) {
+        return 0;
+    }
+
+    return store->recovery_required != 0;
+}
+
+static int object_store_put_request_is_valid(
+    const struct object_store *store,
+    const struct object_store_put_request *request
+) {
+    if ((store == NULL) || (request == NULL) ||
+        object_id_is_zero(request->id) ||
+        object_id_is_zero(request->type_id) ||
+        (store->cache_capacity < OBJECT_HEADER_SIZE) ||
+        ((request->payload == NULL) && (request->payload_size != 0)) ||
+        (request->payload_size > (SIZE_MAX - OBJECT_HEADER_SIZE)) ||
+        (request->payload_size >
+         (store->cache_capacity - OBJECT_HEADER_SIZE))) {
+        return 0;
+    }
+
+    return 1;
+}
+
+static int object_store_prepare_put_bytes(
+    struct object_store *store,
+    const struct object_store_staged_put *staged
+) {
+    const struct object_store_put_request *request;
+    struct object_header *header;
+
+    if ((store == NULL) || (staged == NULL) ||
+        (staged->request == NULL) || (staged->version == 0) ||
+        (staged->object_byte_count < OBJECT_HEADER_SIZE) ||
+        (staged->object_byte_count > store->cache_capacity)) {
+        return 0;
+    }
+
+    request = staged->request;
+    memset(store->cache_buffer, 0, staged->object_byte_count);
+    header = (struct object_header *)store->cache_buffer;
+    header->magic = OBJECT_HEADER_MAGIC;
+    header->format_version = OBJECT_HEADER_FORMAT_VERSION;
+    header->id = request->id;
+    header->type_id = request->type_id;
+    header->version = staged->version;
+    header->payload_size = request->payload_size;
+    header->creator_id = request->creator_id;
+    header->modifier_id = request->modifier_id;
+    header->logical_timestamp = request->logical_timestamp;
+
+    if (request->payload_size != 0) {
+        memcpy(
+            store->cache_buffer + OBJECT_HEADER_SIZE,
+            request->payload,
+            request->payload_size
+        );
+    }
+
+    header->payload_crc32c = object_crc32c(
+        store->cache_buffer + OBJECT_HEADER_SIZE,
+        request->payload_size
+    );
+
+    return object_header_validate(
+        store->cache_buffer,
+        staged->object_byte_count
+    );
+}
+
+enum object_store_batch_result object_store_put_many(
+    struct object_store *store,
+    const struct object_store_put_request *requests,
+    size_t request_count
+) {
+    struct object_store_staged_put staged[OBJECT_STORE_PUT_BATCH_MAX];
+    struct object_table candidate;
+    uint64_t table_sector;
+    uint64_t generation;
+    uint64_t saved_next_sector;
+    size_t allocated_count;
+    size_t request_index;
+    int table_allocated;
+
+    if ((store == NULL) || (requests == NULL) ||
+        (request_count == 0) ||
+        (request_count > OBJECT_STORE_PUT_BATCH_MAX) ||
+        (store->recovery_required != 0) ||
+        (store->current_generation == UINT64_MAX) ||
+        (store->table.entries == NULL) ||
+        (store->scratch_entries == NULL) ||
+        (store->table.count > store->table_capacity) ||
+        (store->table.capacity != store->table_capacity)) {
+        return OBJECT_STORE_BATCH_REJECTED;
+    }
+
+    memset(staged, 0, sizeof(staged));
+    object_table_init(
+        &candidate,
+        store->scratch_entries,
+        store->table_capacity
+    );
+    memcpy(
+        candidate.entries,
+        store->table.entries,
+        store->table.count * sizeof(*candidate.entries)
+    );
+    candidate.count = store->table.count;
+
+    for (request_index = 0;
+         request_index < request_count;
+         request_index++) {
+        const struct object_store_put_request *request;
+        const struct object_table_entry *existing;
+        struct object_table_entry entry;
+        size_t earlier;
+
+        request = &requests[request_index];
+        if (!object_store_put_request_is_valid(store, request)) {
+            return OBJECT_STORE_BATCH_REJECTED;
+        }
+
+        for (earlier = 0; earlier < request_index; earlier++) {
+            if (object_id_equal(requests[earlier].id, request->id)) {
+                return OBJECT_STORE_BATCH_REJECTED;
+            }
+        }
+
+        staged[request_index].request = request;
+        staged[request_index].object_byte_count =
+            OBJECT_HEADER_SIZE + request->payload_size;
+        staged[request_index].sector_count =
+            staged[request_index].object_byte_count /
+            OBJECT_STORE_SECTOR_SIZE;
+        if ((staged[request_index].object_byte_count %
+             OBJECT_STORE_SECTOR_SIZE) != 0) {
+            staged[request_index].sector_count++;
+        }
+        if (staged[request_index].sector_count == 0) {
+            return OBJECT_STORE_BATCH_REJECTED;
+        }
+
+        existing = object_table_find(&store->table, request->id);
+        staged[request_index].version =
+            (existing == NULL) ? 1 : existing->version + 1;
+        if (staged[request_index].version == 0) {
+            return OBJECT_STORE_BATCH_REJECTED;
+        }
+
+        memset(&entry, 0, sizeof(entry));
+        entry.id = request->id;
+        entry.version = staged[request_index].version;
+        entry.first_sector = OBJECT_STORE_FIRST_ALLOCATABLE_SECTOR;
+        entry.sector_count = staged[request_index].sector_count;
+        if (!object_table_upsert(&candidate, entry)) {
+            return OBJECT_STORE_BATCH_REJECTED;
+        }
+    }
+
+    saved_next_sector = store->next_sector;
+    table_sector = 0;
+    allocated_count = 0;
+    table_allocated = 0;
+
+    for (request_index = 0;
+         request_index < request_count;
+         request_index++) {
+        uint64_t end_sector;
+        size_t table_index;
+
+        if (!bitmap_allocate(
+                store,
+                staged[request_index].sector_count,
+                &staged[request_index].first_sector)) {
+            goto reject_allocations;
+        }
+        allocated_count++;
+
+        if (staged[request_index].first_sector >
+            UINT64_MAX - staged[request_index].sector_count) {
+            goto reject_allocations;
+        }
+        end_sector = staged[request_index].first_sector +
+                     staged[request_index].sector_count;
+        if (end_sector > store->next_sector) {
+            store->next_sector = end_sector;
+        }
+
+        for (table_index = 0;
+             table_index < candidate.count;
+             table_index++) {
+            if (object_id_equal(
+                    candidate.entries[table_index].id,
+                    staged[request_index].request->id)) {
+                candidate.entries[table_index].first_sector =
+                    staged[request_index].first_sector;
+                break;
+            }
+        }
+        if (table_index == candidate.count) {
+            goto reject_allocations;
+        }
+    }
+
+    if (!bitmap_allocate(
+            store,
+            (uint64_t)candidate.count,
+            &table_sector)) {
+        goto reject_allocations;
+    }
+    table_allocated = 1;
+
+    if (table_sector > UINT64_MAX - (uint64_t)candidate.count) {
+        goto reject_allocations;
+    }
+    if ((table_sector + (uint64_t)candidate.count) > store->next_sector) {
+        store->next_sector = table_sector + (uint64_t)candidate.count;
+    }
+
+    if (!write_superblock(store)) {
+        goto reject_allocations;
+    }
+
+    for (request_index = 0;
+         request_index < request_count;
+         request_index++) {
+        if (!object_store_prepare_put_bytes(
+                store,
+                &staged[request_index]) ||
+            !write_object_bytes(
+                store,
+                staged[request_index].first_sector,
+                store->cache_buffer,
+                staged[request_index].object_byte_count)) {
+            goto reject_allocations;
+        }
+    }
+
+    if (!write_table_generation(store, &candidate, table_sector)) {
+        goto reject_allocations;
+    }
+
+    generation = store->current_generation + 1;
+    if (!write_wal_root(
+            store,
+            table_sector,
+            candidate.count,
+            generation)) {
+        /*
+         * The WAL sector may have reached stable storage even when the I/O
+         * operation reports failure. Keep its allocations and force remount.
+         */
+        store->recovery_required = 1;
+        return OBJECT_STORE_BATCH_RECOVERY_REQUIRED;
+    }
+
+    memcpy(
+        store->table.entries,
+        candidate.entries,
+        candidate.count * sizeof(*store->table.entries)
+    );
+    store->table.count = candidate.count;
+    store->current_table_sector = table_sector;
+    store->current_generation = generation;
+
+    if (!write_superblock(store) || !clear_wal(store)) {
+        store->recovery_required = 1;
+        return OBJECT_STORE_BATCH_RECOVERY_REQUIRED;
+    }
+
+    if ((request_count == 1) &&
+        object_store_prepare_put_bytes(store, &staged[0])) {
+        (void)cache_insert(
+            store,
+            staged[0].request->id,
+            staged[0].version,
+            store->cache_buffer,
+            staged[0].object_byte_count
+        );
+    }
+
+    return OBJECT_STORE_BATCH_COMMITTED;
+
+reject_allocations:
+    for (request_index = 0;
+         request_index < allocated_count;
+         request_index++) {
+        bitmap_clear_range(
+            store,
+            staged[request_index].first_sector,
+            staged[request_index].sector_count
+        );
+    }
+    if (table_allocated) {
+        bitmap_clear_range(store, table_sector, candidate.count);
+    }
+    store->next_sector = saved_next_sector;
+    return OBJECT_STORE_BATCH_REJECTED;
+}
+
 int object_store_put(
     struct object_store *store,
     struct object_id id,
@@ -820,124 +1132,18 @@ int object_store_put(
     const uint8_t *payload,
     size_t payload_size
 ) {
-    struct object_table candidate;
-    struct object_table_entry entry;
-    const struct object_table_entry *existing;
-    struct object_header *header;
-    uint64_t data_sectors;
-    uint64_t data_sector;
-    uint64_t table_sector;
-    uint64_t generation;
-    size_t object_byte_count;
-    size_t index;
+    struct object_store_put_request request;
 
-    if ((store == NULL) || object_id_is_zero(id) ||
-        object_id_is_zero(type_id) ||
-        ((payload == NULL) && (payload_size != 0)) ||
-        (payload_size > (SIZE_MAX - OBJECT_HEADER_SIZE)) ||
-        (payload_size > (store->cache_capacity - OBJECT_HEADER_SIZE))) {
-        return 0;
-    }
+    request.id = id;
+    request.type_id = type_id;
+    request.creator_id = creator_id;
+    request.modifier_id = modifier_id;
+    request.logical_timestamp = logical_timestamp;
+    request.payload = payload;
+    request.payload_size = payload_size;
 
-    object_byte_count = OBJECT_HEADER_SIZE + payload_size;
-    data_sectors = (object_byte_count + (OBJECT_STORE_SECTOR_SIZE - 1)) /
-                   OBJECT_STORE_SECTOR_SIZE;
-    if ((data_sectors == 0) || (store->current_generation == UINT64_MAX)) {
-        return 0;
-    }
-
-    object_table_init(&candidate, store->scratch_entries, store->table_capacity);
-    memcpy(candidate.entries, store->table.entries,
-           store->table.count * sizeof(*candidate.entries));
-    candidate.count = store->table.count;
-
-    existing = object_table_find(&store->table, id);
-    memset(&entry, 0, sizeof(entry));
-    entry.id = id;
-    entry.version = (existing == NULL) ? 1 : existing->version + 1;
-    if (entry.version == 0) {
-        return 0;
-    }
-    entry.first_sector = OBJECT_STORE_FIRST_ALLOCATABLE_SECTOR;
-    entry.sector_count = data_sectors;
-
-    if (!object_table_upsert(&candidate, entry) ||
-        (candidate.count > UINT64_MAX) ||
-        (data_sectors > (UINT64_MAX - candidate.count))) {
-        return 0;
-    }
-
-    if (!bitmap_allocate(store, data_sectors, &data_sector)) {
-        return 0;
-    }
-    if (!bitmap_allocate(store, candidate.count, &table_sector)) {
-        bitmap_clear_range(store, data_sector, data_sectors);
-        return 0;
-    }
-
-    if ((data_sector + data_sectors) > store->next_sector) {
-        store->next_sector = data_sector + data_sectors;
-    }
-    if ((table_sector + candidate.count) > store->next_sector) {
-        store->next_sector = table_sector + candidate.count;
-    }
-    for (index = 0; index < candidate.count; index++) {
-        if (object_id_equal(candidate.entries[index].id, id)) {
-            candidate.entries[index].first_sector = data_sector;
-            break;
-        }
-    }
-    if (index == candidate.count) {
-        return 0;
-    }
-
-    memset(store->cache_buffer, 0, object_byte_count);
-    header = (struct object_header *)store->cache_buffer;
-    header->magic = OBJECT_HEADER_MAGIC;
-    header->format_version = OBJECT_HEADER_FORMAT_VERSION;
-    header->id = id;
-    header->type_id = type_id;
-    header->version = entry.version;
-    header->payload_size = payload_size;
-    header->creator_id = creator_id;
-    header->modifier_id = modifier_id;
-    header->logical_timestamp = logical_timestamp;
-    if (payload_size != 0) {
-        memcpy(store->cache_buffer + OBJECT_HEADER_SIZE, payload, payload_size);
-    }
-    header->payload_crc32c = object_crc32c(
-        store->cache_buffer + OBJECT_HEADER_SIZE, payload_size
-    );
-    if (!object_header_validate(store->cache_buffer, object_byte_count)) {
-        return 0;
-    }
-
-    if (!write_superblock(store) ||
-        !write_object_bytes(store, data_sector, store->cache_buffer,
-                            object_byte_count) ||
-        !write_table_generation(store, &candidate, table_sector)) {
-        bitmap_clear_range(store, data_sector, data_sectors);
-        bitmap_clear_range(store, table_sector, candidate.count);
-        return 0;
-    }
-
-    generation = store->current_generation + 1;
-    if (!write_wal_root(store, table_sector, candidate.count, generation)) {
-        return 0;
-    }
-
-    memcpy(store->table.entries, candidate.entries,
-           candidate.count * sizeof(*candidate.entries));
-    store->table.count = candidate.count;
-    store->current_table_sector = table_sector;
-    store->current_generation = generation;
-    if (!write_superblock(store) || !clear_wal(store)) {
-        return 0;
-    }
-
-    (void)cache_insert(store, id, entry.version, store->cache_buffer,
-                       object_byte_count);
-    return 1;
+    return object_store_put_many(store, &request, 1) ==
+           OBJECT_STORE_BATCH_COMMITTED;
 }
 
 int object_store_get(
@@ -956,7 +1162,8 @@ int object_store_get(
     size_t sector_count;
     size_t index;
 
-    if ((store == NULL) || object_id_is_zero(id) || (header_out == NULL) ||
+    if ((store == NULL) || object_store_requires_recovery(store) ||
+        object_id_is_zero(id) || (header_out == NULL) ||
         (payload_out == NULL) || (payload_size_out == NULL)) {
         return 0;
     }
@@ -1030,7 +1237,8 @@ int object_store_delete(
     uint64_t generation;
     size_t index;
 
-    if ((store == NULL) || object_id_is_zero(id) ||
+    if ((store == NULL) || object_store_requires_recovery(store) ||
+        object_id_is_zero(id) ||
         (store->current_generation == UINT64_MAX)) {
         return 0;
     }
@@ -1072,6 +1280,7 @@ int object_store_delete(
 
     generation = store->current_generation + 1;
     if (!write_wal_root(store, table_sector, candidate.count, generation)) {
+        store->recovery_required = 1;
         return 0;
     }
 
@@ -1081,6 +1290,7 @@ int object_store_delete(
     store->current_table_sector = table_sector;
     store->current_generation = generation;
     if (!write_superblock(store) || !clear_wal(store)) {
+        store->recovery_required = 1;
         return 0;
     }
 
@@ -1104,7 +1314,8 @@ int object_store_snapshot_create(
     size_t slot;
     size_t index;
 
-    if ((store == NULL) || (snapshot_id_out == NULL) ||
+    if ((store == NULL) || object_store_requires_recovery(store) ||
+        (snapshot_id_out == NULL) ||
         (store->current_generation == UINT64_MAX) ||
         (store->current_table_sector < OBJECT_STORE_FIRST_ALLOCATABLE_SECTOR) ||
         (store->table.count == 0)) {
@@ -1159,7 +1370,8 @@ int object_store_snapshot_rollback(
     uint64_t generation;
     size_t slot;
 
-    if ((store == NULL) || (snapshot_id == 0) ||
+    if ((store == NULL) || object_store_requires_recovery(store) ||
+        (snapshot_id == 0) ||
         (store->current_generation == UINT64_MAX)) {
         return 0;
     }
@@ -1189,6 +1401,7 @@ int object_store_snapshot_rollback(
 
     generation = store->current_generation + 1;
     if (!write_wal_root(store, table_sector, table_count, generation)) {
+        store->recovery_required = 1;
         return 0;
     }
 
@@ -1199,6 +1412,7 @@ int object_store_snapshot_rollback(
     store->current_generation = generation;
 
     if (!write_superblock(store) || !clear_wal(store)) {
+        store->recovery_required = 1;
         return 0;
     }
 
@@ -1212,7 +1426,8 @@ int object_store_snapshot_discard(
     struct object_store_snapshot saved;
     size_t slot;
 
-    if ((store == NULL) || (snapshot_id == 0)) {
+    if ((store == NULL) || object_store_requires_recovery(store) ||
+        (snapshot_id == 0)) {
         return 0;
     }
 
@@ -1239,7 +1454,7 @@ int object_store_snapshot_discard(
 }
 
 int object_store_collect(struct object_store *store) {
-    if (store == NULL) {
+    if ((store == NULL) || object_store_requires_recovery(store)) {
         return 0;
     }
 
@@ -1252,7 +1467,8 @@ int object_store_snapshot_prune(struct object_store *store, size_t keep) {
     size_t slot;
     size_t oldest_slot;
 
-    if ((store == NULL) || (keep > OBJECT_STORE_SNAPSHOT_LIMIT)) {
+    if ((store == NULL) || object_store_requires_recovery(store) ||
+        (keep > OBJECT_STORE_SNAPSHOT_LIMIT)) {
         return 0;
     }
 

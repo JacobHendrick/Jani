@@ -14,7 +14,7 @@ The current kernel includes:
 - Limine boot on BIOS and UEFI
 - serial diagnostics, CPU exceptions, PIC, PIT, and PS/2 keyboard input
 - physical and virtual memory managers plus a kernel heap
-- a log-structured persistent object store on a VirtIO block device
+- a log-structured persistent object store with atomic multi-object commits
 - capability tables with derivation and revocation
 - WAMR 2.4.5 in classic interpreter mode
 - a generated C and Zig syscall ABI
