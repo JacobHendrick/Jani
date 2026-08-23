@@ -25,6 +25,7 @@ unsigned long checks_passed;
 struct hosted_disk {
     uint8_t bytes[DISK_SECTORS][OBJECT_STORE_SECTOR_SIZE];
     unsigned long writes_allowed;
+    unsigned long writes_performed;
 };
 
 struct pressure_disk {
@@ -58,6 +59,7 @@ static int disk_write(
         return 0;
     }
     disk->writes_allowed--;
+    disk->writes_performed++;
 
     memcpy(disk->bytes[sector], buffer, OBJECT_STORE_SECTOR_SIZE);
     return 1;
@@ -100,6 +102,25 @@ static struct object_id make_id(uint64_t high, uint64_t low) {
     id.high = high;
     id.low = low;
     return id;
+}
+
+static struct object_store_put_request make_put_request(
+    struct object_id id,
+    struct object_id type_id,
+    uint64_t logical_timestamp,
+    const uint8_t *payload,
+    size_t payload_size
+) {
+    struct object_store_put_request request;
+
+    request.id = id;
+    request.type_id = type_id;
+    request.creator_id = make_id(3, 1);
+    request.modifier_id = make_id(3, 2);
+    request.logical_timestamp = logical_timestamp;
+    request.payload = payload;
+    request.payload_size = payload_size;
+    return request;
 }
 
 static void test_commit_and_remount(void) {
@@ -1173,8 +1194,365 @@ static void test_delete_last_object_and_recover_wal(void) {
                             &stored_size));
 }
 
+static void test_batch_commit_and_remount(void) {
+    struct hosted_disk disk;
+    struct object_store store;
+    struct object_store remounted;
+    struct object_table_entry entries[TABLE_CAPACITY];
+    struct object_table_entry scratch[TABLE_CAPACITY];
+    struct object_table_entry remounted_entries[TABLE_CAPACITY];
+    struct object_table_entry remounted_scratch[TABLE_CAPACITY];
+    _Alignas(16) uint8_t cache[CACHE_BYTES];
+    uint8_t bitmap[BITMAP_BYTES];
+    _Alignas(16) uint8_t arena[ARENA_BYTES];
+    _Alignas(16) uint8_t remounted_cache[CACHE_BYTES];
+    uint8_t remounted_bitmap[BITMAP_BYTES];
+    _Alignas(16) uint8_t remounted_arena[ARENA_BYTES];
+    struct object_store_put_request requests[3];
+    struct object_header header;
+    const uint8_t *stored;
+    size_t stored_size;
+    struct object_id ids[3];
+    struct object_id type_id;
+    const uint8_t old_payload[] = { 1, 2 };
+    const uint8_t new_payload[] = { 3, 4, 5 };
+    const uint8_t second_payload[] = { 6 };
+    const uint8_t third_payload[] = { 7, 8, 9, 10 };
+    uint64_t generation;
+
+    memset(&disk, 0, sizeof(disk));
+    disk.writes_allowed = ULONG_MAX;
+    ids[0] = make_id(130, 1);
+    ids[1] = make_id(130, 2);
+    ids[2] = make_id(130, 3);
+    type_id = make_id(131, 1);
+
+    CHECK(object_store_format(&store, make_io(&disk), entries, scratch,
+                              TABLE_CAPACITY, cache, sizeof(cache), bitmap,
+                              sizeof(bitmap), arena, sizeof(arena)));
+    CHECK(object_store_put(&store, ids[0], type_id, make_id(3, 1),
+                           make_id(3, 2), 1, old_payload,
+                           sizeof(old_payload)));
+    generation = store.current_generation;
+
+    requests[0] = make_put_request(
+        ids[0], type_id, 2, new_payload, sizeof(new_payload)
+    );
+    requests[1] = make_put_request(
+        ids[1], type_id, 3, second_payload, sizeof(second_payload)
+    );
+    requests[2] = make_put_request(
+        ids[2], type_id, 4, third_payload, sizeof(third_payload)
+    );
+
+    CHECK(object_store_put_many(&store, requests, 3) ==
+          OBJECT_STORE_BATCH_COMMITTED);
+    CHECK(!object_store_requires_recovery(&store));
+    CHECK(store.current_generation == generation + 1);
+    CHECK(store.table.count == 3);
+
+    CHECK(object_store_get(&store, ids[0], &header, &stored, &stored_size));
+    CHECK(header.version == 2);
+    CHECK(stored_size == sizeof(new_payload));
+    CHECK(bytes_equal(stored, new_payload, sizeof(new_payload)));
+
+    CHECK(object_store_get(&store, ids[1], &header, &stored, &stored_size));
+    CHECK(header.version == 1);
+    CHECK(stored_size == sizeof(second_payload));
+    CHECK(bytes_equal(stored, second_payload, sizeof(second_payload)));
+
+    CHECK(object_store_get(&store, ids[2], &header, &stored, &stored_size));
+    CHECK(header.version == 1);
+    CHECK(stored_size == sizeof(third_payload));
+    CHECK(bytes_equal(stored, third_payload, sizeof(third_payload)));
+
+    CHECK(object_store_mount(&remounted, make_io(&disk), remounted_entries,
+                             remounted_scratch, TABLE_CAPACITY,
+                             remounted_cache, sizeof(remounted_cache),
+                             remounted_bitmap, sizeof(remounted_bitmap),
+                             remounted_arena, sizeof(remounted_arena)));
+    CHECK(!object_store_requires_recovery(&remounted));
+    CHECK(remounted.current_generation == generation + 1);
+    CHECK(remounted.table.count == 3);
+    CHECK(object_store_get(
+        &remounted, ids[0], &header, &stored, &stored_size
+    ));
+    CHECK(header.version == 2);
+    CHECK(bytes_equal(stored, new_payload, sizeof(new_payload)));
+    CHECK(object_store_get(
+        &remounted, ids[1], &header, &stored, &stored_size
+    ));
+    CHECK(bytes_equal(stored, second_payload, sizeof(second_payload)));
+    CHECK(object_store_get(
+        &remounted, ids[2], &header, &stored, &stored_size
+    ));
+    CHECK(bytes_equal(stored, third_payload, sizeof(third_payload)));
+}
+
+static void test_batch_rejects_invalid_requests(void) {
+    struct hosted_disk disk;
+    struct object_store store;
+    struct object_table_entry entries[TABLE_CAPACITY];
+    struct object_table_entry scratch[TABLE_CAPACITY];
+    _Alignas(16) uint8_t cache[CACHE_BYTES];
+    uint8_t bitmap[BITMAP_BYTES];
+    _Alignas(16) uint8_t arena[ARENA_BYTES];
+    struct object_store_put_request requests[OBJECT_STORE_PUT_BATCH_MAX];
+    struct object_store_put_request invalid;
+    struct object_id type_id;
+    uint8_t payloads[OBJECT_STORE_PUT_BATCH_MAX];
+    uint64_t generation;
+    size_t index;
+
+    memset(&disk, 0, sizeof(disk));
+    disk.writes_allowed = ULONG_MAX;
+    type_id = make_id(141, 1);
+
+    CHECK(object_store_format(&store, make_io(&disk), entries, scratch,
+                              TABLE_CAPACITY, cache, sizeof(cache), bitmap,
+                              sizeof(bitmap), arena, sizeof(arena)));
+    CHECK(!object_store_requires_recovery(NULL));
+    generation = store.current_generation;
+
+    invalid = make_put_request(
+        make_id(140, 1), type_id, 1, payloads, 1
+    );
+    CHECK(object_store_put_many(NULL, &invalid, 1) ==
+          OBJECT_STORE_BATCH_REJECTED);
+    CHECK(object_store_put_many(&store, NULL, 1) ==
+          OBJECT_STORE_BATCH_REJECTED);
+    CHECK(object_store_put_many(&store, &invalid, 0) ==
+          OBJECT_STORE_BATCH_REJECTED);
+    CHECK(object_store_put_many(
+              &store, &invalid, OBJECT_STORE_PUT_BATCH_MAX + 1
+          ) == OBJECT_STORE_BATCH_REJECTED);
+
+    invalid.id = make_id(0, 0);
+    CHECK(object_store_put_many(&store, &invalid, 1) ==
+          OBJECT_STORE_BATCH_REJECTED);
+    invalid = make_put_request(
+        make_id(140, 1), make_id(0, 0), 1, payloads, 1
+    );
+    CHECK(object_store_put_many(&store, &invalid, 1) ==
+          OBJECT_STORE_BATCH_REJECTED);
+    invalid = make_put_request(
+        make_id(140, 1), type_id, 1, NULL, 1
+    );
+    CHECK(object_store_put_many(&store, &invalid, 1) ==
+          OBJECT_STORE_BATCH_REJECTED);
+    invalid = make_put_request(
+        make_id(140, 1), type_id, 1, payloads, SIZE_MAX
+    );
+    CHECK(object_store_put_many(&store, &invalid, 1) ==
+          OBJECT_STORE_BATCH_REJECTED);
+
+    requests[0] = make_put_request(
+        make_id(140, 1), type_id, 1, payloads, 1
+    );
+    requests[1] = requests[0];
+    CHECK(object_store_put_many(&store, requests, 2) ==
+          OBJECT_STORE_BATCH_REJECTED);
+    CHECK(store.current_generation == generation);
+    CHECK(store.table.count == 0);
+
+    for (index = 0; index < OBJECT_STORE_PUT_BATCH_MAX; index++) {
+        payloads[index] = (uint8_t)(index + 1);
+        requests[index] = make_put_request(
+            make_id(142, index + 1),
+            type_id,
+            index + 1,
+            &payloads[index],
+            1
+        );
+    }
+
+    CHECK(object_store_put_many(
+              &store, requests, OBJECT_STORE_PUT_BATCH_MAX
+          ) == OBJECT_STORE_BATCH_COMMITTED);
+    CHECK(store.table.count == OBJECT_STORE_PUT_BATCH_MAX);
+    generation = store.current_generation;
+
+    invalid = make_put_request(
+        make_id(142, OBJECT_STORE_PUT_BATCH_MAX + 1),
+        type_id,
+        9,
+        payloads,
+        1
+    );
+    CHECK(object_store_put_many(&store, &invalid, 1) ==
+          OBJECT_STORE_BATCH_REJECTED);
+    CHECK(store.current_generation == generation);
+    CHECK(store.table.count == OBJECT_STORE_PUT_BATCH_MAX);
+
+    store.table.entries[0].version = UINT64_MAX;
+    invalid = make_put_request(
+        store.table.entries[0].id, type_id, 10, payloads, 1
+    );
+    CHECK(object_store_put_many(&store, &invalid, 1) ==
+          OBJECT_STORE_BATCH_REJECTED);
+    CHECK(store.current_generation == generation);
+}
+
+static void test_batch_crash_atomicity_and_quarantine(void) {
+    struct hosted_disk baseline;
+    struct hosted_disk attempt;
+    struct object_store store;
+    struct object_store recovered;
+    struct object_table_entry entries[TABLE_CAPACITY];
+    struct object_table_entry scratch[TABLE_CAPACITY];
+    struct object_table_entry recovered_entries[TABLE_CAPACITY];
+    struct object_table_entry recovered_scratch[TABLE_CAPACITY];
+    _Alignas(16) uint8_t cache[CACHE_BYTES];
+    uint8_t bitmap[BITMAP_BYTES];
+    _Alignas(16) uint8_t arena[ARENA_BYTES];
+    _Alignas(16) uint8_t recovered_cache[CACHE_BYTES];
+    uint8_t recovered_bitmap[BITMAP_BYTES];
+    _Alignas(16) uint8_t recovered_arena[ARENA_BYTES];
+    struct object_store_put_request requests[3];
+    struct object_header header;
+    const uint8_t *stored;
+    size_t stored_size;
+    struct object_id ids[3];
+    struct object_id type_id;
+    uint8_t payloads[3][3];
+    unsigned long successful_writes;
+    unsigned long cut;
+    int saw_committed_recovery;
+    int saw_old_generation;
+    int saw_rejected;
+    int saw_recovery_required;
+
+    memset(&baseline, 0, sizeof(baseline));
+    baseline.writes_allowed = ULONG_MAX;
+    type_id = make_id(151, 1);
+
+    for (size_t index = 0; index < 3; index++) {
+        ids[index] = make_id(150, index + 1);
+        payloads[index][0] = (uint8_t)(10 + index);
+        payloads[index][1] = (uint8_t)(20 + index);
+        payloads[index][2] = (uint8_t)(30 + index);
+        requests[index] = make_put_request(
+            ids[index],
+            type_id,
+            index + 1,
+            payloads[index],
+            sizeof(payloads[index])
+        );
+    }
+
+    CHECK(object_store_format(&store, make_io(&baseline), entries, scratch,
+                              TABLE_CAPACITY, cache, sizeof(cache), bitmap,
+                              sizeof(bitmap), arena, sizeof(arena)));
+
+    attempt = baseline;
+    attempt.writes_allowed = ULONG_MAX;
+    attempt.writes_performed = 0;
+    CHECK(object_store_mount(&store, make_io(&attempt), entries, scratch,
+                             TABLE_CAPACITY, cache, sizeof(cache), bitmap,
+                             sizeof(bitmap), arena, sizeof(arena)));
+    CHECK(object_store_put_many(&store, requests, 3) ==
+          OBJECT_STORE_BATCH_COMMITTED);
+    successful_writes = attempt.writes_performed;
+    CHECK(successful_writes > 0);
+
+    saw_committed_recovery = 0;
+    saw_old_generation = 0;
+    saw_rejected = 0;
+    saw_recovery_required = 0;
+
+    for (cut = 0; cut < successful_writes; cut++) {
+        enum object_store_batch_result result;
+        size_t present;
+
+        attempt = baseline;
+        attempt.writes_allowed = ULONG_MAX;
+        attempt.writes_performed = 0;
+        CHECK(object_store_mount(&store, make_io(&attempt), entries, scratch,
+                                 TABLE_CAPACITY, cache, sizeof(cache), bitmap,
+                                 sizeof(bitmap), arena, sizeof(arena)));
+
+        attempt.writes_allowed = cut;
+        attempt.writes_performed = 0;
+        result = object_store_put_many(&store, requests, 3);
+        CHECK(result != OBJECT_STORE_BATCH_COMMITTED);
+
+        if (result == OBJECT_STORE_BATCH_RECOVERY_REQUIRED) {
+            saw_recovery_required = 1;
+            CHECK(object_store_requires_recovery(&store));
+            CHECK(!object_store_get(
+                &store, ids[0], &header, &stored, &stored_size
+            ));
+            CHECK(object_store_put_many(&store, requests, 3) ==
+                  OBJECT_STORE_BATCH_REJECTED);
+            CHECK(!object_store_delete(&store, ids[0]));
+            CHECK(!object_store_collect(&store));
+        } else {
+            saw_rejected = 1;
+            CHECK(result == OBJECT_STORE_BATCH_REJECTED);
+            CHECK(!object_store_requires_recovery(&store));
+            CHECK(store.table.count == 0);
+        }
+
+        attempt.writes_allowed = ULONG_MAX;
+        CHECK(object_store_mount(
+            &recovered,
+            make_io(&attempt),
+            recovered_entries,
+            recovered_scratch,
+            TABLE_CAPACITY,
+            recovered_cache,
+            sizeof(recovered_cache),
+            recovered_bitmap,
+            sizeof(recovered_bitmap),
+            recovered_arena,
+            sizeof(recovered_arena)
+        ));
+        CHECK(!object_store_requires_recovery(&recovered));
+
+        present = 0;
+        for (size_t index = 0; index < 3; index++) {
+            if (object_table_find(&recovered.table, ids[index]) != NULL) {
+                present++;
+            }
+        }
+        CHECK((present == 0) || (present == 3));
+
+        if (present == 0) {
+            saw_old_generation = 1;
+            CHECK(recovered.table.count == 0);
+        } else {
+            saw_committed_recovery = 1;
+            CHECK(recovered.table.count == 3);
+            for (size_t index = 0; index < 3; index++) {
+                CHECK(object_store_get(
+                    &recovered,
+                    ids[index],
+                    &header,
+                    &stored,
+                    &stored_size
+                ));
+                CHECK(header.version == 1);
+                CHECK(stored_size == sizeof(payloads[index]));
+                CHECK(bytes_equal(
+                    stored,
+                    payloads[index],
+                    sizeof(payloads[index])
+                ));
+            }
+        }
+    }
+
+    CHECK(saw_rejected);
+    CHECK(saw_recovery_required);
+    CHECK(saw_old_generation);
+    CHECK(saw_committed_recovery);
+}
+
 int main(void) {
     test_commit_and_remount();
+    test_batch_commit_and_remount();
+    test_batch_rejects_invalid_requests();
+    test_batch_crash_atomicity_and_quarantine();
     test_crash_after_wal_recovers();
     test_snapshot_create_and_rollback();
     test_rollback_crash_after_wal_recovers();

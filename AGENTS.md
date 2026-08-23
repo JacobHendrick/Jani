@@ -63,61 +63,43 @@ load operation.
   is insufficient.
 - The graph is compiled into the kernel and has 128 focused hosted checks, but
   it is not yet connected to component mutation or persistent storage.
+- The object store can publish up to eight object versions through one atomic
+  table generation. Uncertain WAL outcomes quarantine access until remount.
+- The durable delivery design selects copy delegation, generation-bearing slot
+  references, a persisted lineage object, and one store batch for all changed
+  records.
 - WAMR handler instruction metering, 4096-byte syscall transfer limits, mailbox
   overflow hardening, W^X mapping checks, and CR0.WP are enabled.
 
-At the capability-lineage baseline, `make test` reports 9,119 checks,
+At the atomic-batch baseline, `make test` reports 9,296 checks,
 `make kernel` links, and `make idl-check` reports no generated drift.
 
 ## The next implementation slice
 
 Finish Phase 4 capability semantics before beginning the scheduler.
 
-### Design before wiring
+### Delivery design
 
-Write a short design record under `docs/design/` for durable cross-component
-capability delivery. A successful send changes three pieces of state:
-
-1. the recipient mailbox frame;
-2. the capability installed in the recipient's local table;
-3. the global parent-to-child derivation record.
-
-A power loss must not leave those three facts disagreeing. The current object
-store commits one object-table generation at a time; do not simply mutate the
-three in-memory structures and hope later component commits make them durable.
-Choose and test an explicit commit/recovery protocol or a single durable record
-that makes the operation atomic.
-
-The design must answer:
-
-- Where is the global lineage graph stored, and how is it validated on mount?
-- Can it be reconstructed from capability tables, or must foreign-parent
-  references be persisted explicitly?
-- What does message attachment mean: copy/delegate or move?
-- How does the sender choose attenuated rights and the receiver badge?
-- Which right authorizes attachment, and can a non-`GRANT` capability travel?
-- What happens when the receiver table, mailbox, or graph is full?
-- How are partial failure and crash recovery rolled back or replayed?
-- How does revocation traverse local and cross-component descendants without
-  confusing reused slot numbers?
-- What happens when a component is uninstalled while it owns graph nodes?
+`docs/design/2026-08-23-capability-delivery.md` is the approved record for
+cross-component capability delivery. It answers the persistence, attenuation,
+capacity, recovery, revocation, slot reuse, and uninstall questions. Keep the
+implementation consistent with that record or revise the record explicitly.
 
 ### Expected implementation order
 
-1. Add hosted tests that express the chosen crash and rollback semantics.
+1. Add persisted slot generations and make `capability_ref` identify a slot
+   generation, not only its reusable numeric index.
 2. Add serialization and hostile-byte validation for the lineage format.
    Parsing or validating untrusted persistent bytes belongs in Zig.
 3. Add component-set helpers that resolve a `capability_ref` to a live
-   component and exact slot.
+   component and exact slot generation.
 4. Record local derivations in the global graph as well as cross-component
-   edges, or prove how local ancestry is incorporated during global traversal.
+   edges.
 5. On delivery, allocate a new receiver slot. Never place the sender's numeric
    slot directly into the receiver mailbox.
-6. Make insertion transactional: mailbox-full, receiver-table-full,
-   graph-full, store failure, and handler failure must not leave residual
-   authority.
-7. Extend revocation so a parent clears all local and remote descendants and
-   prevents stale graph edges from targeting a later reused slot.
+6. Use the atomic store batch for mailbox, capability-table, and lineage
+   changes. Every capacity and handler failure must leave no residual authority.
+7. Extend revocation so a parent clears all local and remote descendants.
 8. Add two-component hosted coverage, persistence/remount coverage, and a
    QEMU demonstration of allowed delegation plus denied unauthorized access.
 9. Add the bounded per-object provenance ledger required by Phase 4 and show

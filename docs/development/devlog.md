@@ -949,4 +949,29 @@ link by default.
 Gates: `make test` passes 9,119 checks under ASan/UBSan, `make kernel` links,
 and `make idl-check` reports no generated drift.
 
+## 2026-08-23 (Phase 4) - Atomic multi-object store batches
+
+Added a bounded object-store batch that publishes up to eight unique object
+versions through one copy-on-write table generation and the existing WAL root.
+The single-object API now uses the same path. No object-store or WAL disk format
+changed.
+
+Batch results distinguish a clean rejection, a completed commit, and an
+uncertain WAL outcome that requires remount. Once the outcome is uncertain,
+the store rejects further reads and mutations so a caller cannot perform an
+unsafe rollback. Hosted cut-point coverage proves a three-object batch remounts
+as either the complete old generation or the complete new generation, never a
+partial mix.
+
+The durable capability-delivery design now selects copy delegation,
+generation-bearing slot references, an authoritative persisted lineage object,
+and one object-store batch for the receiver mailbox, capability table, and
+lineage edge.
+
+Gates: `make test` passes 9,296 checks under ASan/UBSan, including 1,077
+object-store checks. `make kernel`, `make iso`, and `make idl-check` pass.
+`make fuzz-object-store` completes 10,000 runs, `make crash-test` recovers
+after 25/25 QEMU cuts, and `make write-ordering-negative` still exposes both
+seeded durability failures.
+
 <!-- Next entry goes here -->
