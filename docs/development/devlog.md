@@ -925,4 +925,28 @@ the pinned WAMR 2.4.5 archive, and a two-cycle QEMU run resumes the persistent
 counter from 1 through 30 without kernel errors. The kernel ELF has no RWX
 load segment.
 
+## 2026-08-21 (Phase 4) - Global capability lineage foundation
+
+Added a bounded global capability-derivation graph. Capability references pair
+a component root ID with its local slot, so lineage can cross component-table
+boundaries without treating one component's slot number as meaningful in
+another. The graph rejects malformed references, duplicate children, cycles,
+and capacity overflow. Subtree removal computes the full transitive closure
+before mutating anything and leaves the graph unchanged when the caller's
+output buffer is too small.
+
+The graph is linked into the freestanding kernel but is not yet connected to
+message transfer. That integration needs an explicit durable format and crash
+protocol so a successful send cannot leave the mailbox, receiver capability
+table, and global lineage disagreeing after power loss.
+
+The hosted test exercises corrupt tables, cycle attempts, out-of-order edges,
+transitive branch removal, insufficient-capacity rollback, and the full
+64-record boundary. Hosted links also use `-no-pie`, because Zig 0.16 emits
+non-PIE trust-boundary objects and modern Fedora clang otherwise attempts a PIE
+link by default.
+
+Gates: `make test` passes 9,119 checks under ASan/UBSan, `make kernel` links,
+and `make idl-check` reports no generated drift.
+
 <!-- Next entry goes here -->
