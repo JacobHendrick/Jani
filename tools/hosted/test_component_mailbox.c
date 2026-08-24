@@ -255,6 +255,7 @@ static void test_capability_slots(void) {
     CHECK(component_capability_insert(&component, first,
                                       COMPONENT_RIGHTS_READ, 0, &slot) == 1);
     CHECK(slot == 0);
+    CHECK(capability_table_generation(&component.capability_table, slot) == 1);
     CHECK(component.capability_count == 1);
     CHECK(component.capabilities_dirty == 1);
 
@@ -289,6 +290,7 @@ static void test_dropped_slot_is_reused(void) {
 
     CHECK(component_capability_insert(&component, first, 1, 0, &slot) == 1);
     CHECK(component_capability_insert(&component, second, 1, 0, &slot) == 1);
+    CHECK(component.capability_table.generations[0] == 1);
 
     memset(&component.capability_table.slots[0], 0,
            sizeof(component.capability_table.slots[0]));
@@ -297,6 +299,7 @@ static void test_dropped_slot_is_reused(void) {
     CHECK(component_capability_find(&component, first, &slot) == 0);
     CHECK(component_capability_insert(&component, third, 1, 0, &slot) == 1);
     CHECK(slot == 0);
+    CHECK(capability_table_generation(&component.capability_table, slot) == 2);
     CHECK(component.capability_count == 2);
 }
 
@@ -345,6 +348,9 @@ static void test_component_capability_derivation(void) {
     CHECK(child_slot == 1);
     CHECK(component.capability_count == 2);
     CHECK(component.capability_table.parents[child_slot] == root_slot);
+    CHECK(capability_table_generation(
+              &component.capability_table, child_slot
+          ) == 1);
     CHECK(component.capability_table.slots[child_slot].badge == 8);
     CHECK(component.capabilities_dirty == 1);
 

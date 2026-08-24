@@ -100,11 +100,13 @@ static void test_capability_table(void) {
 
     capability_table_init(&table);
     CHECK(capability_table_get(&table, 0) == NULL);
+    CHECK(capability_table_generation(&table, 0) == 0);
     CHECK(capability_table_is_valid(&table) == 1);
 
     root = make_capability(CAP_RIGHT_ALL, 7);
     CHECK(capability_table_insert_root(&table, &root, &root_slot) == 1);
     CHECK(root_slot == 0);
+    CHECK(capability_table_generation(&table, root_slot) == 1);
     CHECK(table.parents[root_slot] == CAP_SLOT_NONE);
     CHECK(capability_table_find(&table, root.object, &found_slot) == 1);
     CHECK(found_slot == root_slot);
@@ -122,8 +124,13 @@ static void test_capability_table(void) {
     CHECK(child != NULL);
     CHECK(child->rights == CAP_RIGHT_READ);
     CHECK(child->badge == 99);
+    CHECK(capability_table_generation(&table, child_slot) == 1);
     CHECK(table.parents[child_slot] == root_slot);
     CHECK(capability_table_is_valid(&table) == 1);
+
+    invalid = table;
+    invalid.generations[child_slot] = 0;
+    CHECK(capability_table_is_valid(&invalid) == 0);
 
     invalid = table;
     invalid.parents[child_slot] = CAP_TABLE_SLOTS;
@@ -168,8 +175,37 @@ static void test_capability_table(void) {
 
     CHECK(capability_table_revoke(&table, root_slot) == 1);
     CHECK(capability_table_get(&table, root_slot) == NULL);
+    CHECK(table.generations[root_slot] == 1);
     CHECK(capability_table_get(&table, child_slot) == NULL);
     CHECK(capability_table_revoke(&table, root_slot) == 0);
+}
+
+static void test_slot_generation_reuse(void) {
+    struct capability_table table;
+    struct capability capability;
+    uint32_t slot;
+
+    capability_table_init(&table);
+    capability = make_capability(CAP_RIGHT_READ, 1);
+
+    CHECK(capability_table_insert_root(&table, &capability, &slot) == 1);
+    CHECK(slot == 0);
+    CHECK(capability_table_generation(&table, slot) == 1);
+    CHECK(capability_table_revoke(&table, slot) == 1);
+    CHECK(capability_table_generation(&table, slot) == 0);
+    CHECK(table.generations[slot] == 1);
+
+    capability.badge = 2;
+    CHECK(capability_table_insert_root(&table, &capability, &slot) == 1);
+    CHECK(slot == 0);
+    CHECK(capability_table_generation(&table, slot) == 2);
+
+    CHECK(capability_table_revoke(&table, slot) == 1);
+    table.generations[slot] = UINT32_MAX;
+    CHECK(capability_table_is_valid(&table) == 1);
+    CHECK(capability_table_insert_root(&table, &capability, &slot) == 1);
+    CHECK(slot == 1);
+    CHECK(capability_table_generation(&table, slot) == 1);
 }
 
 int main(void) {
@@ -180,6 +216,7 @@ int main(void) {
     test_derivation();
     test_invalid_derivation();
     test_capability_table();
+    test_slot_generation_reuse();
 
     printf("test_capability: %lu checks passed\n", checks_passed);
     return 0;

@@ -974,4 +974,29 @@ object-store checks. `make kernel`, `make iso`, and `make idl-check` pass.
 after 25/25 QEMU cuts, and `make write-ordering-negative` still exposes both
 seeded durability failures.
 
+## 2026-08-23 (Phase 4) - Persisted capability slot generations
+
+Capability slots now carry monotonic 32-bit generations. First use starts at
+generation 1, revocation preserves the counter, reuse advances it, and a slot
+at `UINT32_MAX` retires instead of wrapping. Global capability references now
+compare component ID, slot, and generation, so an old reference cannot name a
+new capability that later occupies the same numeric slot.
+
+Capability-table format version 3 persists all slot generations. The reader
+still accepts versions 1 and 2, importing each occupied legacy slot at
+generation 1. Reads stage and validate the complete table before replacing
+live component state. Hosted coverage exercises reuse, exhaustion, malformed
+live generations, v1/v2 migration, and v3 remount persistence.
+
+The first QEMU run exposed a stale incremental build: `main.o` still reserved
+the old `struct component` size, so component initialization overwrote the
+adjacent GDT and the first timer interrupt triple-faulted. Makefile dependencies
+now rebuild every component-layout consumer when `cap_table.h` changes.
+
+Gates: `make test` passes 9,339 checks under ASan/UBSan; LeakSanitizer was
+disabled only under the traced test environment. `make kernel`, `make iso`,
+and `make idl-check` pass. The three-cycle persistence demo resumes from 1
+through 107, the module-free ISO resumes from 38 through 72, and the negative
+gate catches all three seeded resume defects.
+
 <!-- Next entry goes here -->

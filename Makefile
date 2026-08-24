@@ -269,7 +269,7 @@ $(START_OBJ): $(START_SOURCE) Makefile
 	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
 	$(ZIG_ENV) $(CC) $(CFLAGS) -c $(START_SOURCE) -o $(START_OBJ)
 
-$(MAIN_OBJ): $(KERNEL_SOURCE) Makefile
+$(MAIN_OBJ): $(KERNEL_SOURCE) kernel/wasm/component.h kernel/cap/cap_table.h Makefile
 	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
 	$(ZIG_ENV) $(CC) $(CFLAGS) -c $(KERNEL_SOURCE) -o $(MAIN_OBJ)
 
@@ -598,19 +598,19 @@ $(FUZZ_WASM_SHIM_BIN): $(WASM_SHIM_SOURCES) $(HOSTED_DIR)/fuzz_wasm_shim.c kerne
 	mkdir -p $(BUILD_DIR)
 	$(HOST_CC) $(FUZZ_CFLAGS) -DJANI_HOSTED $(WASM_SHIM_SOURCES) $(HOSTED_DIR)/fuzz_wasm_shim.c -o $(FUZZ_WASM_SHIM_BIN)
 
-$(TEST_COMPONENT_STATE_BIN): $(INSTANCE_STATE_SOURCE) $(STRING_SOURCE) $(OBJECT_HEADER_VALIDATE_HOSTED_OBJ) $(HOSTED_DIR)/test_component_state.c $(HOSTED_DIR)/check.h kernel/wasm/component.h kernel/wasm/instance_state.h Makefile
+$(TEST_COMPONENT_STATE_BIN): $(INSTANCE_STATE_SOURCE) $(STRING_SOURCE) $(OBJECT_HEADER_VALIDATE_HOSTED_OBJ) $(HOSTED_DIR)/test_component_state.c $(HOSTED_DIR)/check.h kernel/wasm/component.h kernel/wasm/instance_state.h kernel/cap/cap_table.h Makefile
 	mkdir -p $(BUILD_DIR)
 	$(HOST_CC) $(HOST_CFLAGS) $(INSTANCE_STATE_SOURCE) $(STRING_SOURCE) $(HOSTED_DIR)/test_component_state.c $(OBJECT_HEADER_VALIDATE_HOSTED_OBJ) -o $(TEST_COMPONENT_STATE_BIN)
 
-$(TEST_COMPONENT_SET_BIN): $(COMPONENT_SET_SOURCE) $(OBJECT_ID_SOURCE) $(HOSTED_DIR)/test_component_set.c $(HOSTED_DIR)/check.h kernel/wasm/component_set.h Makefile
+$(TEST_COMPONENT_SET_BIN): $(COMPONENT_SET_SOURCE) $(OBJECT_ID_SOURCE) $(HOSTED_DIR)/test_component_set.c $(HOSTED_DIR)/check.h kernel/wasm/component_set.h kernel/wasm/component.h kernel/cap/cap_table.h Makefile
 	mkdir -p $(BUILD_DIR)
 	$(HOST_CC) $(HOST_CFLAGS) $(COMPONENT_SET_SOURCE) $(OBJECT_ID_SOURCE) $(HOSTED_DIR)/test_component_set.c -o $(TEST_COMPONENT_SET_BIN)
 
-$(TEST_COMPONENT_MAILBOX_BIN): $(COMPONENT_SOURCE) $(INSTANCE_STATE_SOURCE) $(CAPABILITY_SOURCE) $(CAP_TABLE_SOURCE) $(OBJECT_ID_SOURCE) $(OBJECT_TABLE_SOURCE) $(OBJECT_STORE_SOURCE) $(STRING_SOURCE) $(OBJECT_HEADER_VALIDATE_HOSTED_OBJ) $(WAL_VALIDATE_HOSTED_OBJ) $(HOSTED_DIR)/test_component_mailbox.c $(HOSTED_DIR)/check.h kernel/wasm/component.h Makefile
+$(TEST_COMPONENT_MAILBOX_BIN): $(COMPONENT_SOURCE) $(INSTANCE_STATE_SOURCE) $(CAPABILITY_SOURCE) $(CAP_TABLE_SOURCE) $(OBJECT_ID_SOURCE) $(OBJECT_TABLE_SOURCE) $(OBJECT_STORE_SOURCE) $(STRING_SOURCE) $(OBJECT_HEADER_VALIDATE_HOSTED_OBJ) $(WAL_VALIDATE_HOSTED_OBJ) $(HOSTED_DIR)/test_component_mailbox.c $(HOSTED_DIR)/check.h kernel/wasm/component.h kernel/cap/cap_table.h Makefile
 	mkdir -p $(BUILD_DIR)
 	$(HOST_CC) $(HOST_CFLAGS) $(COMPONENT_SOURCE) $(INSTANCE_STATE_SOURCE) $(CAPABILITY_SOURCE) $(CAP_TABLE_SOURCE) $(OBJECT_ID_SOURCE) $(OBJECT_TABLE_SOURCE) $(OBJECT_STORE_SOURCE) $(STRING_SOURCE) $(HOSTED_DIR)/test_component_mailbox.c $(OBJECT_HEADER_VALIDATE_HOSTED_OBJ) $(WAL_VALIDATE_HOSTED_OBJ) -o $(TEST_COMPONENT_MAILBOX_BIN)
 
-$(TEST_COMPONENT_UNINSTALL_BIN): $(COMPONENT_SOURCE) $(INSTANCE_STATE_SOURCE) $(CAPABILITY_SOURCE) $(CAP_TABLE_SOURCE) $(OBJECT_ID_SOURCE) $(OBJECT_TABLE_SOURCE) $(OBJECT_STORE_SOURCE) $(STRING_SOURCE) $(OBJECT_HEADER_VALIDATE_HOSTED_OBJ) $(WAL_VALIDATE_HOSTED_OBJ) $(HOSTED_DIR)/test_component_uninstall.c $(HOSTED_DIR)/check.h kernel/wasm/component.h Makefile
+$(TEST_COMPONENT_UNINSTALL_BIN): $(COMPONENT_SOURCE) $(INSTANCE_STATE_SOURCE) $(CAPABILITY_SOURCE) $(CAP_TABLE_SOURCE) $(OBJECT_ID_SOURCE) $(OBJECT_TABLE_SOURCE) $(OBJECT_STORE_SOURCE) $(STRING_SOURCE) $(OBJECT_HEADER_VALIDATE_HOSTED_OBJ) $(WAL_VALIDATE_HOSTED_OBJ) $(HOSTED_DIR)/test_component_uninstall.c $(HOSTED_DIR)/check.h kernel/wasm/component.h kernel/cap/cap_table.h Makefile
 	mkdir -p $(BUILD_DIR)
 	$(HOST_CC) $(HOST_CFLAGS) $(COMPONENT_SOURCE) $(INSTANCE_STATE_SOURCE) $(CAPABILITY_SOURCE) $(CAP_TABLE_SOURCE) $(OBJECT_ID_SOURCE) $(OBJECT_TABLE_SOURCE) $(OBJECT_STORE_SOURCE) $(STRING_SOURCE) $(HOSTED_DIR)/test_component_uninstall.c $(OBJECT_HEADER_VALIDATE_HOSTED_OBJ) $(WAL_VALIDATE_HOSTED_OBJ) -o $(TEST_COMPONENT_UNINSTALL_BIN)
 
@@ -728,19 +728,19 @@ $(WASM_RUNTIME_OBJ): $(WASM_RUNTIME_SOURCE) Makefile
 	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
 	$(ZIG_ENV) $(CC) $(CFLAGS) $(WAMR_INCLUDES) $(WAMR_DEFINES) -c $(WASM_RUNTIME_SOURCE) -o $(WASM_RUNTIME_OBJ)
 
-$(SYSCALLS_OBJ): $(SYSCALLS_SOURCE) kernel/wasm/syscalls.h kernel/wasm/component.h kernel/wasm/component_set.h Makefile
+$(SYSCALLS_OBJ): $(SYSCALLS_SOURCE) kernel/wasm/syscalls.h kernel/wasm/component.h kernel/wasm/component_set.h kernel/cap/cap_table.h Makefile
 	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
 	$(ZIG_ENV) $(CC) $(CFLAGS) $(WAMR_INCLUDES) $(WAMR_DEFINES) -c $(SYSCALLS_SOURCE) -o $(SYSCALLS_OBJ)
 
-$(COMPONENT_OBJ): $(COMPONENT_SOURCE) kernel/wasm/component.h kernel/wasm/instance_state.h $(GENERATED_DIR)/records_conform.h Makefile
+$(COMPONENT_OBJ): $(COMPONENT_SOURCE) kernel/wasm/component.h kernel/wasm/instance_state.h kernel/cap/cap_table.h $(GENERATED_DIR)/records_conform.h Makefile
 	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
 	$(ZIG_ENV) $(CC) $(CFLAGS) -c $(COMPONENT_SOURCE) -o $(COMPONENT_OBJ)
 
-$(COMPONENT_SET_OBJ): $(COMPONENT_SET_SOURCE) kernel/wasm/component_set.h kernel/wasm/component.h Makefile
+$(COMPONENT_SET_OBJ): $(COMPONENT_SET_SOURCE) kernel/wasm/component_set.h kernel/wasm/component.h kernel/cap/cap_table.h Makefile
 	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
 	$(ZIG_ENV) $(CC) $(CFLAGS) -c $(COMPONENT_SET_SOURCE) -o $(COMPONENT_SET_OBJ)
 
-$(INSTANCE_STATE_OBJ): $(INSTANCE_STATE_SOURCE) kernel/wasm/component.h kernel/wasm/instance_state.h Makefile
+$(INSTANCE_STATE_OBJ): $(INSTANCE_STATE_SOURCE) kernel/wasm/component.h kernel/wasm/instance_state.h kernel/cap/cap_table.h Makefile
 	mkdir -p $(BUILD_DIR) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
 	$(ZIG_ENV) $(CC) $(CFLAGS) -c $(INSTANCE_STATE_SOURCE) -o $(INSTANCE_STATE_OBJ)
 

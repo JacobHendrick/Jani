@@ -10,11 +10,11 @@
 #define CAPABILITY_REF_SIZE 24u
 #define CAPABILITY_DERIVATION_SIZE 48u
 
-/* A slot is globally identified by its owning component and local index. */
+/* A slot is globally identified by its owner, local index, and generation. */
 struct capability_ref {
     struct object_id component_id;
     uint32_t slot;
-    uint32_t _reserved;
+    uint32_t generation;
 };
 
 _Static_assert(
@@ -39,7 +39,8 @@ struct capability_derivation_table {
 
 struct capability_ref capability_ref_make(
     struct object_id component_id,
-    uint32_t slot
+    uint32_t slot,
+    uint32_t generation
 );
 
 int capability_ref_is_valid(const struct capability_ref *reference);

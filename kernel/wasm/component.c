@@ -158,32 +158,39 @@ static struct object_id component_sequence_id(uint64_t sequence) {
     (COMPONENT_CAP_SLOTS * sizeof(struct capability))
 #define CAPTABLE_PARENTS_BYTES \
     (COMPONENT_CAP_SLOTS * sizeof(uint32_t))
+#define CAPTABLE_GENERATIONS_BYTES \
+    (COMPONENT_CAP_SLOTS * sizeof(uint32_t))
 #define CAPTABLE_V1_PAYLOAD_BYTES \
     (COMPONENT_CAPTABLE_HEADER_SIZE + \
      CAPTABLE_CAPABILITIES_BYTES)
-#define CAPTABLE_PAYLOAD_BYTES \
+#define CAPTABLE_V2_PAYLOAD_BYTES \
     (CAPTABLE_V1_PAYLOAD_BYTES + CAPTABLE_PARENTS_BYTES)
+#define CAPTABLE_PAYLOAD_BYTES \
+    (CAPTABLE_V2_PAYLOAD_BYTES + CAPTABLE_GENERATIONS_BYTES)
 
-static void component_capability_parents_clear(struct component *component) {
+static void component_capability_generations_import(
+    struct capability_table *table
+) {
     uint32_t slot;
 
     for (slot = 0; slot < COMPONENT_CAP_SLOTS; slot++) {
-        component->capability_table.parents[slot] = COMPONENT_CAP_PARENT_NONE;
+        table->generations[slot] =
+            object_id_is_zero(table->slots[slot].object) ? 0 : 1;
     }
 }
 
 static int component_capability_table_valid(
-    const struct component *component,
+    const struct capability_table *table,
     uint32_t slot_count
 ) {
     uint32_t slot;
 
-    if (!capability_table_is_valid(&component->capability_table)) {
+    if (!capability_table_is_valid(table)) {
         return 0;
     }
 
     for (slot = slot_count; slot < COMPONENT_CAP_SLOTS; slot++) {
-        if (capability_table_get(&component->capability_table, slot) != NULL) {
+        if (capability_table_get(table, slot) != NULL) {
             return 0;
         }
     }
@@ -203,7 +210,7 @@ int component_captable_write(
     }
     if ((component->capability_count > COMPONENT_CAP_SLOTS) ||
         !component_capability_table_valid(
-            component, component->capability_count
+            &component->capability_table, component->capability_count
         )) {
         return 0;
     }
@@ -223,6 +230,9 @@ int component_captable_write(
                    (slot * sizeof(parent)),
                &parent, sizeof(parent));
     }
+    memcpy(buffer + CAPTABLE_V2_PAYLOAD_BYTES,
+           component->capability_table.generations,
+           sizeof(component->capability_table.generations));
 
     memset(&captable, 0, sizeof(captable));
     captable.magic = COMPONENT_CAPTABLE_MAGIC;
@@ -231,7 +241,8 @@ int component_captable_write(
     captable.next_object_sequence = component->next_object_sequence;
     captable.payload_crc32c = object_crc32c(
         buffer + COMPONENT_CAPTABLE_HEADER_SIZE,
-        CAPTABLE_CAPABILITIES_BYTES + CAPTABLE_PARENTS_BYTES
+        CAPTABLE_CAPABILITIES_BYTES + CAPTABLE_PARENTS_BYTES +
+            CAPTABLE_GENERATIONS_BYTES
     );
 
     memcpy(buffer, &captable, COMPONENT_CAPTABLE_HEADER_SIZE);
@@ -252,6 +263,7 @@ int component_captable_read(
     struct component *component
 ) {
     struct component_captable_header captable;
+    struct capability_table staged_table;
     struct object_header header;
     const uint8_t *payload;
     size_t payload_size;
@@ -283,11 +295,18 @@ int component_captable_read(
             return 0;
         }
         table_bytes = CAPTABLE_CAPABILITIES_BYTES;
+    } else if (captable.format_version ==
+               COMPONENT_CAPTABLE_FORMAT_VERSION_V2) {
+        if (payload_size != CAPTABLE_V2_PAYLOAD_BYTES) {
+            return 0;
+        }
+        table_bytes = CAPTABLE_CAPABILITIES_BYTES + CAPTABLE_PARENTS_BYTES;
     } else if (captable.format_version == COMPONENT_CAPTABLE_FORMAT_VERSION) {
         if (payload_size != CAPTABLE_PAYLOAD_BYTES) {
             return 0;
         }
-        table_bytes = CAPTABLE_CAPABILITIES_BYTES + CAPTABLE_PARENTS_BYTES;
+        table_bytes = CAPTABLE_CAPABILITIES_BYTES + CAPTABLE_PARENTS_BYTES +
+                      CAPTABLE_GENERATIONS_BYTES;
     } else {
         return 0;
     }
@@ -298,19 +317,27 @@ int component_captable_read(
         return 0;
     }
 
-    memcpy(component->capability_table.slots,
+    capability_table_init(&staged_table);
+    memcpy(staged_table.slots,
            payload + COMPONENT_CAPTABLE_HEADER_SIZE,
-           sizeof(component->capability_table.slots));
-    if (captable.format_version == COMPONENT_CAPTABLE_FORMAT_VERSION_V1) {
-        component_capability_parents_clear(component);
-    } else {
-        memcpy(component->capability_table.parents,
+           sizeof(staged_table.slots));
+    if (captable.format_version != COMPONENT_CAPTABLE_FORMAT_VERSION_V1) {
+        memcpy(staged_table.parents,
                payload + CAPTABLE_V1_PAYLOAD_BYTES,
-               sizeof(component->capability_table.parents));
+               sizeof(staged_table.parents));
     }
-    if (!component_capability_table_valid(component, captable.slot_count)) {
+    if (captable.format_version == COMPONENT_CAPTABLE_FORMAT_VERSION) {
+        memcpy(staged_table.generations,
+               payload + CAPTABLE_V2_PAYLOAD_BYTES,
+               sizeof(staged_table.generations));
+    } else {
+        component_capability_generations_import(&staged_table);
+    }
+    if (!component_capability_table_valid(
+            &staged_table, captable.slot_count)) {
         return 0;
     }
+    component->capability_table = staged_table;
     component->capability_count = captable.slot_count;
     component->next_object_sequence = captable.next_object_sequence;
     component->capabilities_dirty = 0;
