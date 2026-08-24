@@ -6,13 +6,21 @@
 
 unsigned long checks_passed;
 
-static struct capability_ref make_ref(uint64_t component, uint32_t slot)
+static struct capability_ref make_ref_generation(
+    uint64_t component,
+    uint32_t slot,
+    uint32_t generation)
 {
     struct object_id id;
 
     id.high = UINT64_C(9);
     id.low = component;
-    return capability_ref_make(id, slot);
+    return capability_ref_make(id, slot, generation);
+}
+
+static struct capability_ref make_ref(uint64_t component, uint32_t slot)
+{
+    return make_ref_generation(component, slot, 1);
 }
 
 static int contains_ref(
@@ -44,6 +52,9 @@ static void test_reference_validation(void)
     CHECK(capability_ref_equal(reference, make_ref(1, 0)) == 1);
     CHECK(capability_ref_equal(reference, make_ref(1, 1)) == 0);
     CHECK(capability_ref_equal(reference, make_ref(2, 0)) == 0);
+    CHECK(capability_ref_equal(
+              reference, make_ref_generation(1, 0, 2)
+          ) == 0);
 
     reference.component_id.high = 0;
     reference.component_id.low = 0;
@@ -52,8 +63,7 @@ static void test_reference_validation(void)
     reference = make_ref(1, CAP_TABLE_SLOTS);
     CHECK(capability_ref_is_valid(&reference) == 0);
 
-    reference = make_ref(1, 0);
-    reference._reserved = 1;
+    reference = make_ref_generation(1, 0, 0);
     CHECK(capability_ref_is_valid(&reference) == 0);
 }
 
@@ -77,10 +87,12 @@ static void test_add_and_parent_lookup(void)
     CHECK(capability_derivation_parent(&table, parent, &found) == 0);
 
     CHECK(capability_derivation_add(&table, parent, child) == 0);
+    child = make_ref_generation(2, 3, 2);
+    CHECK(capability_derivation_add(&table, parent, child) == 1);
     CHECK(capability_derivation_add(&table, child, child) == 0);
     CHECK(capability_derivation_add(NULL, parent, child) == 0);
     CHECK(capability_derivation_parent(&table, child, NULL) == 0);
-    CHECK(table.count == 1);
+    CHECK(table.count == 2);
 }
 
 static void test_cycle_rejection(void)

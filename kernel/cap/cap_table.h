@@ -11,6 +11,7 @@
 struct capability_table {
     struct capability slots[CAP_TABLE_SLOTS];
     uint32_t parents[CAP_TABLE_SLOTS];
+    uint32_t generations[CAP_TABLE_SLOTS];
 };
 
 void capability_table_init(struct capability_table *table);
@@ -22,6 +23,11 @@ int capability_table_insert_root(
 );
 
 const struct capability *capability_table_get(
+    const struct capability_table *table,
+    uint32_t slot
+);
+
+uint32_t capability_table_generation(
     const struct capability_table *table,
     uint32_t slot
 );

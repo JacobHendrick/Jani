@@ -52,16 +52,17 @@ load operation.
 - Per-component tables contain 16 slots and local parent links.
 - Derivation requires `GRANT` and may only attenuate rights.
 - Local revocation recursively clears descendants.
-- Capability tables persist in format version 2 and still read version 1.
+- Capability tables persist slot generations in format version 3 and still
+  read versions 1 and 2.
 - `cap_derive`, `cap_revoke`, and `cap_drop` cross the generated WASM ABI.
 - A bounded component set routes message payloads to running components.
 - Cross-component capability attachments are still deliberately rejected.
 - `kernel/cap/derivation.{c,h}` now provides a bounded 64-edge global lineage
-  graph keyed by `(component root ID, local slot)`.
+  graph keyed by `(component root ID, local slot, generation)`.
 - The global graph rejects malformed references, duplicate children, cycles,
   and overflow. Subtree removal is transitive and atomic when output capacity
   is insufficient.
-- The graph is compiled into the kernel and has 128 focused hosted checks, but
+- The graph is compiled into the kernel and has 130 focused hosted checks, but
   it is not yet connected to component mutation or persistent storage.
 - The object store can publish up to eight object versions through one atomic
   table generation. Uncertain WAL outcomes quarantine access until remount.
@@ -71,7 +72,7 @@ load operation.
 - WAMR handler instruction metering, 4096-byte syscall transfer limits, mailbox
   overflow hardening, W^X mapping checks, and CR0.WP are enabled.
 
-At the atomic-batch baseline, `make test` reports 9,296 checks,
+At the slot-generation baseline, `make test` reports 9,339 checks,
 `make kernel` links, and `make idl-check` reports no generated drift.
 
 ## The next implementation slice
@@ -87,22 +88,20 @@ implementation consistent with that record or revise the record explicitly.
 
 ### Expected implementation order
 
-1. Add persisted slot generations and make `capability_ref` identify a slot
-   generation, not only its reusable numeric index.
-2. Add serialization and hostile-byte validation for the lineage format.
+1. Add serialization and hostile-byte validation for the lineage format.
    Parsing or validating untrusted persistent bytes belongs in Zig.
-3. Add component-set helpers that resolve a `capability_ref` to a live
+2. Add component-set helpers that resolve a `capability_ref` to a live
    component and exact slot generation.
-4. Record local derivations in the global graph as well as cross-component
+3. Record local derivations in the global graph as well as cross-component
    edges.
-5. On delivery, allocate a new receiver slot. Never place the sender's numeric
+4. On delivery, allocate a new receiver slot. Never place the sender's numeric
    slot directly into the receiver mailbox.
-6. Use the atomic store batch for mailbox, capability-table, and lineage
+5. Use the atomic store batch for mailbox, capability-table, and lineage
    changes. Every capacity and handler failure must leave no residual authority.
-7. Extend revocation so a parent clears all local and remote descendants.
-8. Add two-component hosted coverage, persistence/remount coverage, and a
+6. Extend revocation so a parent clears all local and remote descendants.
+7. Add two-component hosted coverage, persistence/remount coverage, and a
    QEMU demonstration of allowed delegation plus denied unauthorized access.
-9. Add the bounded per-object provenance ledger required by Phase 4 and show
+8. Add the bounded per-object provenance ledger required by Phase 4 and show
    successful and denied uses in the milestone demo.
 
 Only after the capability milestone is coherent should work proceed to the

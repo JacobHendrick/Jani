@@ -6,7 +6,7 @@ static int capability_ref_is_zero(struct capability_ref reference)
 {
     return object_id_is_zero(reference.component_id) &&
            reference.slot == 0 &&
-           reference._reserved == 0;
+           reference.generation == 0;
 }
 
 static int derivation_is_zero(
@@ -18,13 +18,14 @@ static int derivation_is_zero(
 
 struct capability_ref capability_ref_make(
     struct object_id component_id,
-    uint32_t slot)
+    uint32_t slot,
+    uint32_t generation)
 {
     struct capability_ref reference;
 
     reference.component_id = component_id;
     reference.slot = slot;
-    reference._reserved = 0;
+    reference.generation = generation;
     return reference;
 }
 
@@ -36,7 +37,7 @@ int capability_ref_is_valid(const struct capability_ref *reference)
 
     return !object_id_is_zero(reference->component_id) &&
            reference->slot < CAP_TABLE_SLOTS &&
-           reference->_reserved == 0;
+           reference->generation != 0;
 }
 
 int capability_ref_equal(
@@ -44,7 +45,8 @@ int capability_ref_equal(
     struct capability_ref right)
 {
     return object_id_equal(left.component_id, right.component_id) &&
-           left.slot == right.slot;
+           left.slot == right.slot &&
+           left.generation == right.generation;
 }
 
 void capability_derivation_table_init(

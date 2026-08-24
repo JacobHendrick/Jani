@@ -1,7 +1,7 @@
 # Durable capability delivery
 
-Status: Phase 4 design record. The atomic object-store batch is the first
-implemented dependency; capability delivery itself remains pending.
+Status: Phase 4 design record. Atomic object-store batches and persisted slot
+generations are implemented dependencies; capability delivery remains pending.
 
 ## Goal
 

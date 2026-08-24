@@ -15,7 +15,7 @@ The current kernel includes:
 - serial diagnostics, CPU exceptions, PIC, PIT, and PS/2 keyboard input
 - physical and virtual memory managers plus a kernel heap
 - a log-structured persistent object store with atomic multi-object commits
-- capability tables with derivation and revocation
+- generation-safe capability tables with derivation and revocation
 - WAMR 2.4.5 in classic interpreter mode
 - a generated C and Zig syscall ABI
 - persistent WASM component state and bounded component mailboxes
