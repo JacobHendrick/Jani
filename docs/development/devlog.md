@@ -999,4 +999,61 @@ and `make idl-check` pass. The three-cycle persistence demo resumes from 1
 through 107, the module-free ISO resumes from 38 through 72, and the negative
 gate catches all three seeded resume defects.
 
+## 2026-09-07 (Phase 4) - Component runtime milestone
+
+Pulled main at `d79ef8bc` and implemented persisted global lineage, atomic
+cross-component delegation, remote revocation, queued-attachment cleanup,
+provenance, cooperative scheduling, metering, trace queries, persisted replay,
+service replacement/rollback, and supervised Zig WASM block-request handling.
+The original message-send import remains compatible with installed Phase 3
+modules; explicit rights and badges use the new `message_send_cap` import.
+
+Handler progress, object writes, receiver mailboxes, capability tables, lineage,
+and diagnostic records now publish through one bounded store batch. Per-send
+publication would leave a duplicate-delivery window when the sender rolled back.
+Failed handlers restore their snapshots and stop their interpreter without
+stopping healthy peers. Uncertain WAL publication quarantines the whole domain.
+The existing disk/WAL and capability-table formats remain compatible. Persisted
+mailbox frames now receive Zig validation before restoration, including length
+overflow checks.
+
+Hot-swap preserves the declared state region and mailbox, not all old memory:
+copying the full memory would overwrite a replacement's initialized constants.
+Bindings, root, module, and state publish together. Replay retains the original
+module and expected final image so saved recordings can be checked later. The
+milestone compares every memory byte and reports CRC32C `ae3a6faf`.
+
+The block driver constructs and completes requests in WASM. Its separate Zig
+supervisor recreates a deliberately trapped driver with a new generation, then
+the demo compares disk bytes and validates the store. PCI/MMIO and generic
+split-ring transport remain a checked kernel broker. This is not an
+interrupt-only kernel or hardware-isolated driver, and the restart test does
+not prove recovery from arbitrary in-flight DMA faults. Cycle reservations are
+cooperative admission budgets, not hard real-time guarantees.
+
+Verification:
+
+- `make test`: 14,160 ASan/UBSan checks, including 4,813 Phase 4 checks and
+  delivery/hot-swap write-cut coverage. LeakSanitizer disabled only for the
+  traced test environment.
+- `make phase4-negative`: all four seeded defects rejected: amplified rights,
+  stale queued attachments, missed replay mismatch, and mailbox loss on upgrade.
+- `make phase4-demo`: real guest permission/device denials, persisted provenance,
+  byte-identical live and saved replay, compatible upgrade, rollback, remote
+  revocation, and driver restart all pass. Fixed a runner race by truncating
+  the previous serial log before starting QEMU.
+- Three 50-second power cycles resume the counter from 1 through 34; a module-free
+  ISO resumes it from 27 through 41. All three seeded resume defects are caught.
+- All 25 QEMU crash cuts recover a consistent store. Both hosted flush-ordering
+  negative controls still expose lost-data outcomes.
+- Object-store, WASM-module, syscall-argument, and WASM-shim fuzzers each complete
+  10,000 runs. Zig-only branches are not coverage-instrumented by these C drivers.
+- Tool checks, kernel/ISO builds, generated IDL drift/negative checks, and the
+  75-file pinned WAMR verification pass. The final ISO is the normal boot image,
+  not a seeded negative-control build.
+
+The bounded Phase 4 milestone is complete. Its limits and the transport
+refinement are in `docs/design/2026-09-07-phase4-runtime.md`. Next is the Phase 5
+distribution design, starting with identity, message formats, and trust boundaries.
+
 <!-- Next entry goes here -->

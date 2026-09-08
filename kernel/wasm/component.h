@@ -26,6 +26,7 @@
 #define COMPONENT_CAPTABLE_FORMAT_VERSION_V2 UINT32_C(2)
 #define COMPONENT_CAPTABLE_FORMAT_VERSION UINT32_C(3)
 #define COMPONENT_CAPTABLE_HEADER_SIZE 32u
+#define COMPONENT_CAPTABLE_BYTES (COMPONENT_CAPTABLE_HEADER_SIZE + CAP_TABLE_SLOTS * 32u)
 
 #ifndef COMPONENT_MAILBOX_BYTES
 #define COMPONENT_MAILBOX_BYTES 4096u
@@ -101,6 +102,13 @@ _Static_assert(
     "capability table header must be exactly 32 bytes"
 );
 
+struct component_metrics {
+    uint64_t invocations;
+    uint64_t cycles;
+    uint64_t allocated;
+    uint64_t messages_sent;
+};
+
 struct component {
     struct object_id root_id;
     struct object_id module_id;
@@ -126,6 +134,8 @@ struct component {
     void *instance;
     void *exec_env;
     void *module_bytes;
+    struct capability_domain *domain;
+    struct component_metrics metrics;
 };
 
 struct object_id component_make_id(uint64_t high, uint64_t low);
@@ -166,6 +176,9 @@ int component_captable_read(
     struct object_store *store,
     struct component *component
 );
+
+int component_captable_encode(const struct component *component,
+                              uint8_t *buffer, size_t capacity);
 
 int component_mailbox_push(
     struct component *component,

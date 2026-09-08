@@ -5,6 +5,7 @@
 #include "../mm/pmm.h"
 #include "../mm/vmm.h"
 #include "virtio_blk.h"
+#include "block_component.h"
 #include "virtio_pci.h"
 #include "virtqueue.h"
 
@@ -46,28 +47,6 @@ static int allocate_dma_page(void) {
     dma_virtual = virtual_address;
     memset(dma_virtual, 0, PMM_FRAME_SIZE);
     return 1;
-}
-
-static void prepare_header(uint32_t type, uint64_t sector) {
-    struct virtio_blk_req_header *header;
-
-    header = (struct virtio_blk_req_header *)(dma_virtual + DMA_HEADER_OFFSET);
-    header->type = type;
-    header->reserved = 0;
-    header->sector = sector;
-    dma_virtual[DMA_STATUS_OFFSET] = 0xFFu;
-}
-
-static void fill_header_buffer(struct virtqueue_buffer *buffer) {
-    buffer->physical_address = dma_physical + DMA_HEADER_OFFSET;
-    buffer->length = (uint32_t)sizeof(struct virtio_blk_req_header);
-    buffer->device_writable = 0;
-}
-
-static void fill_status_buffer(struct virtqueue_buffer *buffer) {
-    buffer->physical_address = dma_physical + DMA_STATUS_OFFSET;
-    buffer->length = 1u;
-    buffer->device_writable = 1;
 }
 
 int virtio_blk_init(void) {
@@ -125,83 +104,41 @@ int virtio_blk_init(void) {
     blk_ready = 1;
 
     printk("virtio-blk ready: %d sectors of 512 bytes\n", (int)blk_capacity);
-    return 1;
+    return block_component_start();
 }
 
 uint64_t virtio_blk_capacity_sectors(void) {
     return blk_capacity;
 }
 
-int virtio_blk_io_read(void *context, uint64_t sector, uint8_t *buffer) {
-    struct virtqueue_buffer parts[3];
 
-    (void)context;
-
-    if (!blk_ready || (buffer == 0) || (sector >= blk_capacity)) {
-        return 0;
+int virtio_blk_dma(uint32_t offset, uint8_t *bytes, uint32_t length, int write) {
+    if (!blk_ready || offset > PMM_FRAME_SIZE || length > PMM_FRAME_SIZE - offset ||
+        (length != 0 && bytes == NULL)) return 0;
+    if (length) {
+        if (write) memcpy(dma_virtual + offset, bytes, length);
+        else memcpy(bytes, dma_virtual + offset, length);
     }
-
-    prepare_header(VIRTIO_BLK_T_IN, sector);
-
-    fill_header_buffer(&parts[0]);
-    parts[1].physical_address = dma_physical + DMA_DATA_OFFSET;
-    parts[1].length = VIRTIO_BLK_SECTOR_SIZE;
-    parts[1].device_writable = 1;
-    fill_status_buffer(&parts[2]);
-
-    if (!virtqueue_submit(&blk_queue, parts, 3)) {
-        return 0;
-    }
-    if (dma_virtual[DMA_STATUS_OFFSET] != VIRTIO_BLK_S_OK) {
-        return 0;
-    }
-
-    memcpy(buffer, dma_virtual + DMA_DATA_OFFSET, VIRTIO_BLK_SECTOR_SIZE);
     return 1;
 }
 
-int virtio_blk_io_write(void *context, uint64_t sector, const uint8_t *buffer) {
-    struct virtqueue_buffer parts[3];
-
-    (void)context;
-
-    if (!blk_ready || (buffer == 0) || (sector >= blk_capacity)) {
+int virtio_blk_submit(const uint8_t *descriptors, uint32_t length, uint32_t operation, uint64_t sector) {
+    struct virtqueue_buffer buffers[3];
+    struct virtio_blk_req_header header;
+    if (!blk_ready || !block_descriptors_validate(descriptors, length, operation)) return 0;
+    memcpy(&header, dma_virtual, sizeof(header));
+    if (header.type != operation || header.reserved != 0 || header.sector != sector) return 0;
+    for (uint32_t i = 0; i < length / 12; i++) {
+        uint32_t descriptor[3];
+        memcpy(descriptor, descriptors + i * 12, sizeof(descriptor));
+        buffers[i].physical_address = dma_physical + descriptor[0];
+        buffers[i].length = descriptor[1];
+        buffers[i].device_writable = (int)descriptor[2];
+    }
+    if (!virtqueue_submit(&blk_queue, buffers, (uint16_t)(length / 12))) {
+        /* A timed-out device might still DMA. Do not reuse its ring or buffers. */
+        blk_ready = 0;
         return 0;
     }
-
-    memcpy(dma_virtual + DMA_DATA_OFFSET, buffer, VIRTIO_BLK_SECTOR_SIZE);
-    prepare_header(VIRTIO_BLK_T_OUT, sector);
-
-    fill_header_buffer(&parts[0]);
-    parts[1].physical_address = dma_physical + DMA_DATA_OFFSET;
-    parts[1].length = VIRTIO_BLK_SECTOR_SIZE;
-    parts[1].device_writable = 0;
-    fill_status_buffer(&parts[2]);
-
-    if (!virtqueue_submit(&blk_queue, parts, 3)) {
-        return 0;
-    }
-
-    return dma_virtual[DMA_STATUS_OFFSET] == VIRTIO_BLK_S_OK;
-}
-
-int virtio_blk_io_flush(void *context) {
-    struct virtqueue_buffer parts[2];
-
-    (void)context;
-
-    if (!blk_ready) {
-        return 0;
-    }
-
-    prepare_header(VIRTIO_BLK_T_FLUSH, 0);
-
-    fill_header_buffer(&parts[0]);
-    fill_status_buffer(&parts[1]);
-
-    if (!virtqueue_submit(&blk_queue, parts, 2)) {
-        return 0;
-    }
-
-    return dma_virtual[DMA_STATUS_OFFSET] == VIRTIO_BLK_S_OK;
+    return 1;
 }

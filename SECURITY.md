@@ -30,10 +30,23 @@ Current defensive controls include:
 - validation of guest memory ranges before syscall reads and writes
 - a 4096-byte limit on object and message transfers
 - capability checks for object and message operations
+- generation-checked persisted lineage and transitive remote revocation
+- handler-wide atomic persistence and rollback on failed publication
+- checked DMA offsets and non-delegable driver/supervisor entry points
 - W^X enforcement for pages created by Jani's page mapper
 - CR0.WP enabled so Ring 0 respects read-only page mappings
 - checksummed persistent records and write-ahead-log recovery
 - pinned WAMR source version and SHA-256 verification
+
+Driver protocol execution now runs in a WASM component, but PCI/MMIO and generic
+VirtIO queue transport remain in Ring 0. A timed-out queue is disabled because
+completion may be uncertain. The tested supervisor restart occurs between
+requests; it is not proof of safe recovery from arbitrary in-flight DMA faults.
+
+Scheduler cycle reservations are cooperative admission budgets, not hard
+real-time guarantees. Replay and provenance are bounded diagnostic records,
+not authenticated audit logs. Hot-swap compatibility metadata is supplied by
+trusted installation code; schema agreement does not prove semantic safety.
 
 ## Protections Not Yet Implemented
 

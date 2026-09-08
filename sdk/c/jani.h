@@ -14,10 +14,20 @@ int32_t jani_cap_drop(int32_t slot);
 int32_t jani_cap_derive(int32_t parent, uint32_t rights, uint32_t badge);
 int32_t jani_cap_revoke(int32_t slot);
 int32_t jani_message_send(int32_t target, uint32_t payload_ptr, uint32_t payload_len, int32_t capability);
+int32_t jani_message_send_cap(int32_t target, uint32_t payload_ptr, uint32_t payload_len, int32_t capability, uint32_t rights, uint32_t badge);
+int32_t jani_provenance(int32_t slot, uint32_t age, uint32_t buffer_ptr, uint32_t buffer_len);
+int32_t jani_stats(uint32_t buffer_ptr, uint32_t buffer_len);
+int32_t jani_trace(uint32_t age, uint32_t buffer_ptr, uint32_t buffer_len);
 int32_t jani_message_recv(uint32_t buffer_ptr, uint32_t buffer_len, uint32_t capability_out);
 int32_t jani_timer_set(uint64_t delay_ticks);
 int64_t jani_time_logical(void);
 int32_t jani_self(void);
 void jani_exit(int32_t code);
+int32_t jani_driver_request(uint32_t buffer_ptr, uint32_t buffer_len);
+int32_t jani_driver_complete(int32_t status, uint32_t buffer_ptr, uint32_t buffer_len);
+int32_t jani_dma_read(int32_t slot, uint32_t offset, uint32_t buffer_ptr, uint32_t buffer_len);
+int32_t jani_dma_write(int32_t slot, uint32_t offset, uint32_t buffer_ptr, uint32_t buffer_len);
+int32_t jani_queue_submit(int32_t slot, uint32_t descriptors_ptr, uint32_t descriptors_len);
+int32_t jani_driver_restart(void);
 
 #endif

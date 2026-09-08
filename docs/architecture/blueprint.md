@@ -844,6 +844,12 @@ you avoided via I5).
 PHASE 4 - CAPABILITIES, SCHEDULER, REPLAY, HOT-SWAP   (~3,000-6,000 lines C)
 --------------------------------------------------------------------------------
 GOAL: Make the component world safe, fair, observable, and updatable.
+IMPLEMENTATION NOTE (2026-09-07): the bounded milestone implementation is
+described in docs/design/2026-09-07-phase4-runtime.md. Driver request logic is
+WASM; generic PCI/MMIO/split-ring transport remains a checked kernel broker,
+not yet the interrupt-only endpoint proposed below. Cycle budgets are
+cooperative admission, not hard real-time preemption. Read that record for
+transaction limits, replay bounds, and the exact upgrade/restart guarantees.
 Lands: capability substrate completed, U3 (hot-swap), U4 (record/replay),
 U5 proven, U6 enforced, U9 (latency class), U10 (budgets), U12
 (introspection).

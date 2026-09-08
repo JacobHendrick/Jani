@@ -4,10 +4,12 @@
 #include "platform_common.h"
 
 #include "component.h"
+#include "module.h"
 #include "syscalls.h"
 #include "../lib/printk.h"
 #include "../lib/string.h"
 #include "../mm/heap.h"
+#include "../sched/scheduler.h"
 
 _Static_assert(WASM_ENABLE_INTERP == 1,
                "determinism contract requires the classic interpreter");
@@ -28,12 +30,24 @@ _Static_assert(WASM_ENABLE_INSTRUCTION_METERING == 1,
 #define JANI_WASM_ERROR_SIZE 128
 #define JANI_WASM_INSTRUCTION_LIMIT 10000000
 
+static void account_allocation(void *result, unsigned int size) {
+    struct component *c = jani_syscall_current();
+    if (result != NULL && c != NULL) {
+        c->metrics.allocated = size > UINT64_MAX - c->metrics.allocated ? UINT64_MAX : c->metrics.allocated + size;
+        scheduler_trace(scheduler_current(), c, TRACE_ALLOCATE, size);
+    }
+}
+
 static void *jani_wasm_walloc(unsigned int size) {
-    return kmalloc((size_t)size);
+    void *result = kmalloc((size_t)size);
+    account_allocation(result, size);
+    return result;
 }
 
 static void *jani_wasm_wrealloc(void *ptr, unsigned int size) {
-    return krealloc(ptr, (size_t)size); 
+    void *result = krealloc(ptr, (size_t)size);
+    account_allocation(result, size);
+    return result;
 }
 
 static void jani_wasm_wfree(void *ptr) {
@@ -94,6 +108,7 @@ int jani_wasm_instance_create(
     wasm_module_inst_t instance;
     wasm_exec_env_t exec_env;
     uint8_t *owned;
+    uint32_t sections;
 
     if ((bytes == NULL) || (module_out == NULL) || (instance_out == NULL) ||
         (exec_env_out == NULL) || (owned_bytes_out == NULL)) {
@@ -104,6 +119,7 @@ int jani_wasm_instance_create(
     *instance_out = NULL;
     *exec_env_out = NULL;
     *owned_bytes_out = NULL;
+    if (length == 0 || length > UINT32_MAX || !jani_wasm_module_validate(bytes, length, &sections)) return 0;
     error_buffer[0] = '\0';
 
     owned = kmalloc(length);
@@ -223,6 +239,14 @@ int jani_wasm_instance_memory_grow(void *instance, size_t required_bytes) {
            ? 1 : 0;
 }
 
+int jani_wasm_instance_has_handler(void *instance, const char *name) {
+    if (instance == NULL || name == NULL) return 0;
+    wasm_module_inst_t module = instance;
+    wasm_function_inst_t function = wasm_runtime_lookup_function(module, name);
+    return function != NULL && wasm_func_get_param_count(function, module) == 0 &&
+        wasm_func_get_result_count(function, module) == 0;
+}
+
 int jani_wasm_instance_call(void *instance, void *exec_env, const char *name) {
     wasm_function_inst_t function;
 
@@ -231,7 +255,7 @@ int jani_wasm_instance_call(void *instance, void *exec_env, const char *name) {
     }
 
     function = wasm_runtime_lookup_function((wasm_module_inst_t)instance, name);
-    if (function == NULL) {
+    if (!jani_wasm_instance_has_handler(instance, name)) {
         printk("ERROR: wamr: module exports no '%s'\n", name);
         return 0;
     }

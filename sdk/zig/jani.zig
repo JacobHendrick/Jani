@@ -9,11 +9,21 @@ extern "env" fn jani_cap_drop(slot: i32) i32;
 extern "env" fn jani_cap_derive(parent: i32, rights: u32, badge: u32) i32;
 extern "env" fn jani_cap_revoke(slot: i32) i32;
 extern "env" fn jani_message_send(target: i32, payload_ptr: [*]const u8, payload_len: u32, capability: i32) i32;
+extern "env" fn jani_message_send_cap(target: i32, payload_ptr: [*]const u8, payload_len: u32, capability: i32, rights: u32, badge: u32) i32;
+extern "env" fn jani_provenance(slot: i32, age: u32, buffer_ptr: [*]u8, buffer_len: u32) i32;
+extern "env" fn jani_stats(buffer_ptr: [*]u8, buffer_len: u32) i32;
+extern "env" fn jani_trace(age: u32, buffer_ptr: [*]u8, buffer_len: u32) i32;
 extern "env" fn jani_message_recv(buffer_ptr: [*]u8, buffer_len: u32, capability_out: ?*i32) i32;
 extern "env" fn jani_timer_set(delay_ticks: u64) i32;
 extern "env" fn jani_time_logical() i64;
 extern "env" fn jani_self() i32;
 extern "env" fn jani_exit(code: i32) void;
+extern "env" fn jani_driver_request(buffer_ptr: [*]u8, buffer_len: u32) i32;
+extern "env" fn jani_driver_complete(status: i32, buffer_ptr: [*]const u8, buffer_len: u32) i32;
+extern "env" fn jani_dma_read(slot: i32, offset: u32, buffer_ptr: [*]u8, buffer_len: u32) i32;
+extern "env" fn jani_dma_write(slot: i32, offset: u32, buffer_ptr: [*]const u8, buffer_len: u32) i32;
+extern "env" fn jani_queue_submit(slot: i32, descriptors_ptr: [*]const u8, descriptors_len: u32) i32;
+extern "env" fn jani_driver_restart() i32;
 
 pub fn log(message: []const u8) i32 {
     return jani_log(message.ptr, @intCast(message.len));
@@ -51,6 +61,22 @@ pub fn message_send(target: i32, payload: []const u8, capability: i32) i32 {
     return jani_message_send(target, payload.ptr, @intCast(payload.len), capability);
 }
 
+pub fn message_send_cap(target: i32, payload: []const u8, capability: i32, rights: u32, badge: u32) i32 {
+    return jani_message_send_cap(target, payload.ptr, @intCast(payload.len), capability, rights, badge);
+}
+
+pub fn provenance(slot: i32, age: u32, buffer: []u8) i32 {
+    return jani_provenance(slot, age, buffer.ptr, @intCast(buffer.len));
+}
+
+pub fn stats(buffer: []u8) i32 {
+    return jani_stats(buffer.ptr, @intCast(buffer.len));
+}
+
+pub fn trace(age: u32, buffer: []u8) i32 {
+    return jani_trace(age, buffer.ptr, @intCast(buffer.len));
+}
+
 pub fn message_recv(buffer: []u8, capability_out: ?*i32) i32 {
     return jani_message_recv(buffer.ptr, @intCast(buffer.len), capability_out);
 }
@@ -69,5 +95,29 @@ pub fn self() i32 {
 
 pub fn exit(code: i32) void {
     jani_exit(code);
+}
+
+pub fn driver_request(buffer: []u8) i32 {
+    return jani_driver_request(buffer.ptr, @intCast(buffer.len));
+}
+
+pub fn driver_complete(status: i32, buffer: []const u8) i32 {
+    return jani_driver_complete(status, buffer.ptr, @intCast(buffer.len));
+}
+
+pub fn dma_read(slot: i32, offset: u32, buffer: []u8) i32 {
+    return jani_dma_read(slot, offset, buffer.ptr, @intCast(buffer.len));
+}
+
+pub fn dma_write(slot: i32, offset: u32, buffer: []const u8) i32 {
+    return jani_dma_write(slot, offset, buffer.ptr, @intCast(buffer.len));
+}
+
+pub fn queue_submit(slot: i32, descriptors: []const u8) i32 {
+    return jani_queue_submit(slot, descriptors.ptr, @intCast(descriptors.len));
+}
+
+pub fn driver_restart() i32 {
+    return jani_driver_restart();
 }
 

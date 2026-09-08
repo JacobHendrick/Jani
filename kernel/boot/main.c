@@ -20,6 +20,7 @@
 #include "../wasm/instance_state.h"
 #include "../wasm/module.h"
 #include "../wasm/runtime.h"
+#include "../sched/scheduler.h"
 #include "../wasm/syscalls.h"
 #include "../arch/stack.h"
 
@@ -227,7 +228,7 @@ static int run_heap_test(void) {
 
 #define DEMO_SECTORS 16384u
 #define DEMO_TABLE_CAPACITY 64u
-#define DEMO_CACHE_BYTES 98304u
+#define DEMO_CACHE_BYTES 262144u
 #define DEMO_ARENA_BYTES 16384u
 #define DEMO_BITMAP_BYTES ((DEMO_SECTORS + 7u) / 8u)
 
@@ -504,8 +505,18 @@ static int run_store_demo(void) {
 #define JANI_WOW_BUG_LOSE_MEMORY 3
 
 static struct component demo_component;
+static struct component other_components[COMPONENT_MAX - 1];
+static uint64_t component_logical_time;
 static struct component_set demo_components;
+static struct capability_domain demo_domain;
+static struct scheduler demo_scheduler;
 static int demo_component_ready;
+
+static uint64_t component_clock(void) {
+    uint32_t low, high;
+    __asm__ volatile ("lfence; rdtsc" : "=a"(low), "=d"(high) : : "memory");
+    return ((uint64_t)high << 32) | low;
+}
 
 static int run_component_leak_test(
     const uint8_t *module_bytes,
@@ -558,13 +569,19 @@ static int run_component_demo(void) {
     component_set_init(&demo_components);
     jani_syscall_set_component_set(&demo_components);
 
-    if (component_registry_load(
+    int registered = component_registry_load(
             &demo_store,
             roots,
             COMPONENT_MAX,
             &count,
             &sequence
-        ) && (count > 0)) {
+        );
+    if (!registered && object_table_find(&demo_store.table,
+            (struct object_id){COMPONENT_REGISTRY_ID_HIGH, COMPONENT_REGISTRY_ID_LOW}) != NULL) {
+        kputs("ERROR: corrupt component registry\n");
+        return 0;
+    }
+    if (registered && count > 0) {
         printk("store: registry found (%d component)\n", (int)count);
 
         if (!component_resume(&demo_store, roots[0], &demo_component)) {
@@ -576,6 +593,13 @@ static int run_component_demo(void) {
             "component: resumed at logical time %d\n",
             (int)demo_component.logical_time
         );
+        for (size_t i = 1; i < count; i++) {
+            if (!component_resume(&demo_store, roots[i], &other_components[i - 1]) ||
+                !component_set_add(&demo_components, &other_components[i - 1])) {
+                kputs("ERROR: could not resume complete component set\n");
+                return 0;
+            }
+        }
 
 #if JANI_WOW_BUG == JANI_WOW_BUG_INIT_ON_RESUME
         (void)jani_wasm_instance_call(
@@ -650,7 +674,17 @@ static int run_component_demo(void) {
         return 0;
     }
 
+    if (!capability_domain_open(&demo_domain, &demo_store, &demo_components) ||
+        !scheduler_init(&demo_scheduler, &demo_domain, 1, UINT64_C(2000000000), component_clock)) {
+        kputs("ERROR: component authority/scheduler initialization failed\n");
+        return 0;
+    }
     demo_component_ready = 1;
+    component_logical_time = 0;
+    for (uint32_t i = 0; i < COMPONENT_MAX; i++) {
+        struct component *c = demo_components.items[i];
+        if (c != NULL && c->logical_time > component_logical_time) component_logical_time = c->logical_time;
+    }
     return 1;
 }
 
@@ -662,7 +696,7 @@ static void component_tick_forever(void) {
     for (;;) {
         __asm__ volatile ("sti; hlt");
 
-        if (!demo_component_ready || !demo_component.timer_armed) {
+        if (!demo_component_ready) {
             continue;
         }
 
@@ -671,21 +705,28 @@ static void component_tick_forever(void) {
         }
         next_deadline += COMPONENT_TICK_PERIOD;
 
+#if JANI_WOW_BUG == JANI_WOW_BUG_SKIP_COMMIT
         if (!component_invoke_timer(&demo_component)) {
-            kputs("ERROR: component timer handler failed\n");
+#else
+        if (component_logical_time == UINT64_MAX) {
             demo_component_ready = 0;
             continue;
         }
-
-#if JANI_WOW_BUG != JANI_WOW_BUG_SKIP_COMMIT
-        if (!component_commit(&demo_store, &demo_component)) {
-            kputs("ERROR: component commit failed\n");
-            demo_component_ready = 0;
-            continue;
+        component_logical_time++;
+        int failed = 0;
+        for (uint32_t i = 0; i < COMPONENT_MAX; i++) {
+            int result = scheduler_step(&demo_scheduler, component_logical_time);
+            if (result < 0) { failed = 1; break; }
+            if (result == 0) break;
         }
+        if (failed) {
 #endif
+            kputs("ERROR: component timer handler failed\n");
+            if (demo_domain.halted || object_store_requires_recovery(&demo_store)) demo_component_ready = 0;
+            continue;
+        }
 
-        if ((demo_component.logical_time % COMPONENT_COLLECT_EVERY) == 0) {
+        if ((component_logical_time % COMPONENT_COLLECT_EVERY) == 0) {
             if (!object_store_collect(&demo_store)) {
                 kputs("ERROR: component store collect failed\n");
                 demo_component_ready = 0;
@@ -752,6 +793,11 @@ void kmain(void) {
 
         if (run_component_demo()) {
             kputs("component demo ok\n");
+#ifdef JANI_PHASE4_DEMO
+            extern int phase4_demo(struct object_store *, struct component *);
+            (void)phase4_demo(&demo_store, &demo_component);
+            demo_component_ready = 0;
+#endif
         } else {
             kputs("ERROR: component demo failed\n");
         }

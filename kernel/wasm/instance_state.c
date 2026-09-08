@@ -4,6 +4,8 @@
 #include "../obj/object_header.h"
 
 size_t instance_state_size(size_t memory_size, uint32_t mailbox_used) {
+    if (mailbox_used > COMPONENT_MAILBOX_BYTES ||
+        memory_size > SIZE_MAX - INSTANCE_STATE_HEADER_SIZE - mailbox_used) return 0;
     return INSTANCE_STATE_HEADER_SIZE + (size_t)mailbox_used + memory_size;
 }
 
@@ -14,44 +16,8 @@ int instance_state_header_validate(
     size_t *memory_size_out
 ) {
     struct instance_state_header header;
-    uint64_t payload_bytes;
-    uint64_t expected_total;
-    uint32_t calculated_crc;
-
-    if ((bytes == NULL) || (byte_count < INSTANCE_STATE_HEADER_SIZE)) {
-        return 0;
-    }
-
+    if (!instance_state_bytes_validate(bytes, byte_count)) return 0;
     memcpy(&header, bytes, INSTANCE_STATE_HEADER_SIZE);
-
-    if ((header.magic != INSTANCE_STATE_MAGIC) ||
-        (header.format_version != INSTANCE_STATE_FORMAT_VERSION) ||
-        (header.header_size != INSTANCE_STATE_HEADER_SIZE) ||
-        (header._reserved != 0) ||
-        (header._padding != 0)) {
-        return 0;
-    }
-
-    if (header.mailbox_used > COMPONENT_MAILBOX_BYTES) {
-        return 0;
-    }
-
-    if ((header.timer_armed != 0) && (header.timer_armed != 1)) {
-        return 0;
-    }
-
-    payload_bytes = (uint64_t)header.mailbox_used + header.memory_size;
-    expected_total = (uint64_t)INSTANCE_STATE_HEADER_SIZE + payload_bytes;
-
-    if (expected_total != (uint64_t)byte_count) {
-        return 0;
-    }
-
-    calculated_crc = object_crc32c(bytes + INSTANCE_STATE_HEADER_SIZE,
-                                   (size_t)payload_bytes);
-    if (calculated_crc != header.payload_crc32c) {
-        return 0;
-    }
 
     if (memory_offset_out != NULL) {
         *memory_offset_out = INSTANCE_STATE_HEADER_SIZE +
@@ -87,7 +53,7 @@ int instance_state_serialize(
     }
 
     total = instance_state_size(memory_size, component->mailbox_used);
-    if (total > capacity) {
+    if (total == 0 || total > capacity) {
         return 0;
     }
 

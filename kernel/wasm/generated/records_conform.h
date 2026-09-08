@@ -149,4 +149,95 @@ _Static_assert(
     "instance_state_header changed size; update idl/records.idl"
 );
 
+_Static_assert(
+    offsetof(struct service_binding, magic) == 0,
+    "service_binding.magic moved; update idl/records.idl"
+);
+_Static_assert(
+    offsetof(struct service_binding, format) == 8,
+    "service_binding.format moved; update idl/records.idl"
+);
+_Static_assert(
+    offsetof(struct service_binding, reserved) == 12,
+    "service_binding.reserved moved; update idl/records.idl"
+);
+_Static_assert(
+    offsetof(struct service_binding, owner) == 16,
+    "service_binding.owner moved; update idl/records.idl"
+);
+_Static_assert(
+    offsetof(struct service_binding, module) == 32,
+    "service_binding.module moved; update idl/records.idl"
+);
+_Static_assert(
+    offsetof(struct service_binding, previous_module) == 48,
+    "service_binding.previous_module moved; update idl/records.idl"
+);
+_Static_assert(
+    offsetof(struct service_binding, state_schema) == 64,
+    "service_binding.state_schema moved; update idl/records.idl"
+);
+_Static_assert(
+    offsetof(struct service_binding, message_mask) == 72,
+    "service_binding.message_mask moved; update idl/records.idl"
+);
+_Static_assert(
+    offsetof(struct service_binding, generation) == 80,
+    "service_binding.generation moved; update idl/records.idl"
+);
+_Static_assert(
+    offsetof(struct service_binding, previous_messages) == 88,
+    "service_binding.previous_messages moved; update idl/records.idl"
+);
+_Static_assert(
+    offsetof(struct service_binding, state_offset) == 96,
+    "service_binding.state_offset moved; update idl/records.idl"
+);
+_Static_assert(
+    offsetof(struct service_binding, state_size) == 100,
+    "service_binding.state_size moved; update idl/records.idl"
+);
+_Static_assert(
+    offsetof(struct service_binding, crc) == 104,
+    "service_binding.crc moved; update idl/records.idl"
+);
+_Static_assert(
+    offsetof(struct service_binding, padding) == 108,
+    "service_binding.padding moved; update idl/records.idl"
+);
+_Static_assert(
+    sizeof(struct service_binding) == 112,
+    "service_binding changed size; update idl/records.idl"
+);
+
+_Static_assert(
+    offsetof(struct service_ping, kind) == 0,
+    "service_ping.kind moved; update idl/records.idl"
+);
+_Static_assert(
+    offsetof(struct service_ping, reserved) == 4,
+    "service_ping.reserved moved; update idl/records.idl"
+);
+_Static_assert(
+    sizeof(struct service_ping) == 8,
+    "service_ping changed size; update idl/records.idl"
+);
+
+_Static_assert(
+    offsetof(struct service_counter_state, count) == 0,
+    "service_counter_state.count moved; update idl/records.idl"
+);
+_Static_assert(
+    offsetof(struct service_counter_state, slot) == 8,
+    "service_counter_state.slot moved; update idl/records.idl"
+);
+_Static_assert(
+    offsetof(struct service_counter_state, reserved) == 12,
+    "service_counter_state.reserved moved; update idl/records.idl"
+);
+_Static_assert(
+    sizeof(struct service_counter_state) == 16,
+    "service_counter_state changed size; update idl/records.idl"
+);
+
 #endif
