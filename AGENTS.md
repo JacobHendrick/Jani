@@ -72,11 +72,17 @@ the driver restart proof does not cover arbitrary in-flight DMA faults.
 ## Next implementation slice
 
 The bounded Phase 4 milestone is verified in
-docs/development/phase4-progress.md. The hosted suite reports 14,160 checks,
-including 4,813 Phase 4 checks. The next phase is distribution: start with its
-design and trust boundaries before adding a network stack. Follow the user's
+docs/development/phase4-progress.md. The suite reports 14,259 hosted checks,
+including 4,813 Phase 4 checks, and two Zig decoder tests. The next phase is
+distribution: start with its design and trust boundaries before adding a
+network stack. Follow the user's
 preference for small C/Zig sections when teaching;
 handle build integration and tests when requested.
+
+`kernel/net` now contains the public-key byte representation and a C-callable
+Zig length decoder. This is not cryptographic validation or peer authentication;
+networking is still absent. See docs/design/2026-09-12-node-identity-decoding.md.
+Use `make test-node-identity` and `make node-identity-negative` for this slice.
 
 The durable delivery design is docs/design/2026-08-23-capability-delivery.md.
 Its revised transaction boundary commits sender progress with receiver delivery.

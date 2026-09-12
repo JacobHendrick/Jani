@@ -249,6 +249,7 @@ KERNEL_OBJECTS += $(WASM_SHIM_OBJECTS) $(WAMR_PLATFORM_OBJ) $(WAMR_OBJECTS) \
 	$(SYSCALLS_OBJ)
 
 .DEFAULT_GOAL := all
+include kernel/net/net.mk
 include kernel/phase4.mk
 
 .PHONY: all check-tools kernel iso resume-iso run run-debug test fuzz-heap \

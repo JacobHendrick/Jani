@@ -1056,4 +1056,25 @@ The bounded Phase 4 milestone is complete. Its limits and the transport
 refinement are in `docs/design/2026-09-07-phase4-runtime.md`. Next is the Phase 5
 distribution design, starting with identity, message formats, and trust boundaries.
 
+## 2026-09-12 (Phase 5) - Public-key decoding integration
+
+Confirmed the corrected decoder test setup: its first input byte must be 1
+before checking that a later input mutation leaves the copied byte equal to 1.
+Both Zig tests pass. Added the C-callable Zig decoder, kernel/host build rules,
+and 99 C integration checks for exact lengths, nulls, unchanged output on failure,
+overlapping buffers, output guards, and public-key comparison. The code checks
+representation only; it does not authenticate peers or enable networking.
+
+`make check-tools test kernel iso idl-check` passes: 14,259 hosted checks and
+two Zig tests. C tests used the normal ASan/UBSan configuration; leak detection
+was not disabled this session. Zig decoding uses ReleaseSafe rather than C
+sanitizer instrumentation. `make node-identity-negative` rejects a separate
+mutant that accepts oversized input. Both C API symbols are in the kernel ELF.
+A 12-second, no-disk QEMU smoke test reaches the Jani banner and timer ticks;
+storage/component demos report the absent disk, as expected. QEMU was stopped
+by the test timeout. No persistent formats, guest syscalls, or boot logic changed.
+
+The buffer contract and remaining identity design work are documented in
+`docs/design/2026-09-12-node-identity-decoding.md`.
+
 <!-- Next entry goes here -->
