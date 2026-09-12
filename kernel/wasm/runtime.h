@@ -37,6 +37,7 @@ int jani_wasm_instance_memory(
 int jani_wasm_instance_memory_grow(void *instance, size_t required_bytes);
 
 int jani_wasm_instance_call(void *instance, void *exec_env, const char *name);
+int jani_wasm_instance_has_handler(void *instance, const char *name);
 
 void jani_wasm_set_current_component(struct component *component);
 

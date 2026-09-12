@@ -5,6 +5,7 @@
 #include "../obj/object_header.h"
 #include "instance_state.h"
 #include "runtime.h"
+#include "service.h"
 
 #include "generated/records_conform.h"
 
@@ -198,14 +199,11 @@ static int component_capability_table_valid(
     return 1;
 }
 
-int component_captable_write(
-    struct object_store *store,
-    struct component *component
-) {
-    uint8_t buffer[CAPTABLE_PAYLOAD_BYTES];
+int component_captable_encode(const struct component *component,
+                              uint8_t *buffer, size_t capacity) {
     struct component_captable_header captable;
 
-    if ((store == NULL) || (component == NULL)) {
+    if (buffer == NULL || capacity < CAPTABLE_PAYLOAD_BYTES || component == NULL) {
         return 0;
     }
     if ((component->capability_count > COMPONENT_CAP_SLOTS) ||
@@ -215,7 +213,7 @@ int component_captable_write(
         return 0;
     }
 
-    memset(buffer, 0, sizeof(buffer));
+    memset(buffer, 0, CAPTABLE_PAYLOAD_BYTES);
     memcpy(buffer + COMPONENT_CAPTABLE_HEADER_SIZE,
            component->capability_table.slots,
            sizeof(component->capability_table.slots));
@@ -246,6 +244,15 @@ int component_captable_write(
     );
 
     memcpy(buffer, &captable, COMPONENT_CAPTABLE_HEADER_SIZE);
+    return 1;
+}
+
+int component_captable_write(struct object_store *store,
+                             struct component *component) {
+    uint8_t buffer[CAPTABLE_PAYLOAD_BYTES];
+    if (store == NULL || !component_captable_encode(component, buffer, sizeof(buffer))) {
+        return 0;
+    }
 
     if (!object_store_put(store, component->captable_id,
                           component_make_id(0, COMPONENT_TYPE_CAPTABLE),
@@ -639,6 +646,7 @@ int component_commit(
     size_t needed;
     size_t written;
     int result;
+    uint8_t caps[COMPONENT_CAPTABLE_BYTES];
 
     if ((store == NULL) || (component == NULL)) {
         return 0;
@@ -655,20 +663,22 @@ int component_commit(
         return 0;
     }
 
-    if (component->capabilities_dirty &&
-        !component_captable_write(store, component)) {
-        return 0;
-    }
-
     result = 0;
     if (instance_state_serialize(component, memory, memory_size, scratch,
                                  needed, &written)) {
-        result = object_store_put(
-            store, component->state_id,
-            component_make_id(0, COMPONENT_TYPE_INSTANCE_STATE),
-            component->root_id, component->root_id,
-            component->logical_time, scratch, written
-        );
+        struct object_store_put_request requests[2] = {
+            {component->state_id, {0, COMPONENT_TYPE_INSTANCE_STATE}, component->root_id,
+             component->root_id, component->logical_time, scratch, written}
+        };
+        size_t count = 1;
+        if (component->capabilities_dirty) {
+            if (!component_captable_encode(component, caps, sizeof(caps))) return 0;
+            requests[count++] = (struct object_store_put_request){
+                component->captable_id, {0, COMPONENT_TYPE_CAPTABLE}, component->root_id,
+                component->root_id, component->logical_time, caps, sizeof(caps)};
+        }
+        result = object_store_put_many(store, requests, count) == OBJECT_STORE_BATCH_COMMITTED;
+        if (result) component->capabilities_dirty = 0;
     }
 
     return result;
@@ -692,10 +702,12 @@ int component_install(
 
     if (!component_registry_load(store, roots, COMPONENT_MAX, &count,
                                  &sequence)) {
+        if (object_table_find(&store->table,
+                component_make_id(COMPONENT_REGISTRY_ID_HIGH, COMPONENT_REGISTRY_ID_LOW)) != NULL) return 0;
         count = 0;
         sequence = 1;
     }
-    if (count >= COMPONENT_MAX) {
+    if (count >= COMPONENT_MAX || sequence == 0 || sequence > UINT64_MAX - 4) {
         return 0;
     }
 
@@ -740,6 +752,7 @@ int component_install(
         component_release(component_out);
         return 0;
     }
+    jani_wasm_set_current_component(NULL);
 
     if (!component_commit(store, component_out)) {
         component_release(component_out);

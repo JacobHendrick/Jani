@@ -15,6 +15,11 @@ records.
 
 ## Design Records
 
+- [Phase 4 runtime](design/2026-09-07-phase4-runtime.md): transactions, scheduler,
+  replay, service replacement, and the driver boundary.
+- [Node public-key decoding](design/2026-09-12-node-identity-decoding.md): the
+  C/Zig byte-decoding contract and its limits before networking.
+
 The files in [design/](design/) describe decisions for major subsystems. They
 record the intended behavior and security boundaries, but the source and
 tests remain authoritative when implementation details have changed.

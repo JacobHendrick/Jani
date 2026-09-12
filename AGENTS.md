@@ -46,67 +46,47 @@ load operation.
   mailboxes, install/resume/uninstall, deterministic-resume checks, and a
   module-free zero-install resume image.
 
-### Phase 4 work already present
+### Phase 4 implementation
 
-- A capability is an object ID, rights mask, and badge.
-- Per-component tables contain 16 slots and local parent links.
-- Derivation requires `GRANT` and may only attenuate rights.
-- Local revocation recursively clears descendants.
-- Capability tables persist slot generations in format version 3 and still
-  read versions 1 and 2.
-- `cap_derive`, `cap_revoke`, and `cap_drop` cross the generated WASM ABI.
-- A bounded component set routes message payloads to running components.
-- Cross-component capability attachments are still deliberately rejected.
-- `kernel/cap/derivation.{c,h}` now provides a bounded 64-edge global lineage
-  graph keyed by `(component root ID, local slot, generation)`.
-- The global graph rejects malformed references, duplicate children, cycles,
-  and overflow. Subtree removal is transitive and atomic when output capacity
-  is insufficient.
-- The graph is compiled into the kernel and has 130 focused hosted checks, but
-  it is not yet connected to component mutation or persistent storage.
-- The object store can publish up to eight object versions through one atomic
-  table generation. Uncertain WAL outcomes quarantine access until remount.
-- The durable delivery design selects copy delegation, generation-bearing slot
-  references, a persisted lineage object, and one store batch for all changed
-  records.
-- WAMR handler instruction metering, 4096-byte syscall transfer limits, mailbox
-  overflow hardening, W^X mapping checks, and CR0.WP are enabled.
+- Persisted global lineage resolves exact component/slot/generation references.
+- Handler-wide transactions publish object writes, sender progress, receiver
+  mailboxes, capability tables, lineage, provenance, and traces atomically.
+- Copy delegation attenuates rights; revocation includes remote descendants and
+  removes revoked attachments from queued frames before slot reuse.
+- All registered components resume before authority resolution.
+- Cooperative scheduling supports mailboxes/timers, priorities, interactive
+  admission, per-instance counters, and bounded caller-owned trace queries.
+- Recording captures handler boundaries and syscall inputs/results/outputs.
+  Persisted sessions retain the original module and expected final memory.
+- Service bindings support schema-checked state-region/mailbox-preserving
+  replacement and code rollback through atomic four-object batches.
+- Zig WASM block-request logic has a separate restarting supervisor. Generic
+  PCI/MMIO/split-ring transport remains in the kernel as a checked broker.
+- The original message_send ABI remains supported; message_send_cap adds rights
+  and badge parameters without breaking already installed Phase 3 modules.
 
-At the slot-generation baseline, `make test` reports 9,339 checks,
-`make kernel` links, and `make idl-check` reports no generated drift.
+Read docs/design/2026-09-07-phase4-runtime.md for bounds and explicit limits.
+Runtime isolation is still Ring 0; budgets are not hard real-time guarantees;
+the driver restart proof does not cover arbitrary in-flight DMA faults.
 
-## The next implementation slice
+## Next implementation slice
 
-Finish Phase 4 capability semantics before beginning the scheduler.
+The bounded Phase 4 milestone is verified in
+docs/development/phase4-progress.md. The suite reports 14,259 hosted checks,
+including 4,813 Phase 4 checks, and two Zig decoder tests. The next phase is
+distribution: start with its design and trust boundaries before adding a
+network stack. Follow the user's
+preference for small C/Zig sections when teaching;
+handle build integration and tests when requested.
 
-### Delivery design
+`kernel/net` now contains the public-key byte representation and a C-callable
+Zig length decoder. This is not cryptographic validation or peer authentication;
+networking is still absent. See docs/design/2026-09-12-node-identity-decoding.md.
+Use `make test-node-identity` and `make node-identity-negative` for this slice.
 
-`docs/design/2026-08-23-capability-delivery.md` is the approved record for
-cross-component capability delivery. It answers the persistence, attenuation,
-capacity, recovery, revocation, slot reuse, and uninstall questions. Keep the
-implementation consistent with that record or revise the record explicitly.
-
-### Expected implementation order
-
-1. Add serialization and hostile-byte validation for the lineage format.
-   Parsing or validating untrusted persistent bytes belongs in Zig.
-2. Add component-set helpers that resolve a `capability_ref` to a live
-   component and exact slot generation.
-3. Record local derivations in the global graph as well as cross-component
-   edges.
-4. On delivery, allocate a new receiver slot. Never place the sender's numeric
-   slot directly into the receiver mailbox.
-5. Use the atomic store batch for mailbox, capability-table, and lineage
-   changes. Every capacity and handler failure must leave no residual authority.
-6. Extend revocation so a parent clears all local and remote descendants.
-7. Add two-component hosted coverage, persistence/remount coverage, and a
-   QEMU demonstration of allowed delegation plus denied unauthorized access.
-8. Add the bounded per-object provenance ledger required by Phase 4 and show
-   successful and denied uses in the milestone demo.
-
-Only after the capability milestone is coherent should work proceed to the
-round-robin scheduler, priorities, interactive budget admission, metering,
-record/replay, trace/introspection, hot-swap, and the driver-component proof.
+The durable delivery design is docs/design/2026-08-23-capability-delivery.md.
+Its revised transaction boundary commits sender progress with receiver delivery.
+Do not restore per-send publication without a durable deduplication protocol.
 
 ## Non-negotiable architecture invariants
 
@@ -192,6 +172,7 @@ Run focused gates according to the change:
 | Heap | `make fuzz-heap` |
 | Object store/WAL | `make fuzz-object-store`, `make crash-test`, `make write-ordering-negative` |
 | Persistent components | `make wow-demo`, `make wow-demo-negative`, `make zero-install-test` |
+| Phase 4 runtime | `make test-phase4`, `make phase4-negative`, `make phase4-demo` |
 | Boot, VMM, interrupts, drivers | `make run` and inspect serial output |
 
 ASan leak detection may fail when the test process is itself run under a

@@ -40,3 +40,32 @@ record instance_state_header size 64 {
     _reserved:            u32 @ 52;
     _padding:             u64 @ 56;
 }
+
+record service_binding size 112 {
+    magic: u64 @ 0;
+    format: u32 @ 8;
+    reserved: u32 @ 12;
+    owner: object-ref @ 16;
+    module: object-ref @ 32;
+    previous_module: object-ref @ 48;
+    state_schema: u64 @ 64;
+    message_mask: u64 @ 72;
+    generation: u64 @ 80;
+    previous_messages: u64 @ 88;
+    state_offset: u32 @ 96;
+    state_size: u32 @ 100;
+    crc: u32 @ 104;
+    padding: u32 @ 108;
+}
+
+// Interface 1: message bit 0 is a ping; state schema 1 is this counter.
+record service_ping size 8 {
+    kind: u32 @ 0;
+    reserved: u32 @ 4;
+}
+
+record service_counter_state size 16 {
+    count: u64 @ 0;
+    slot: i32 @ 8;
+    reserved: u32 @ 12;
+}

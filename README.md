@@ -19,6 +19,10 @@ The current kernel includes:
 - WAMR 2.4.5 in classic interpreter mode
 - a generated C and Zig syscall ABI
 - persistent WASM component state and bounded component mailboxes
+- atomic cross-component capability delivery, remote revocation, and provenance
+- cooperative scheduling with priorities, budget admission, stats, and tracing
+- persisted record/replay and mailbox-preserving service replacement/rollback
+- a Zig WASM block-request driver with supervised restart
 - hosted tests, fuzz targets, a TLA+ model, and QEMU boot checks
 
 WASM components currently execute through WAMR inside the kernel address
@@ -29,10 +33,15 @@ you did not write.
 ## Project Direction
 
 The long-term design is described in [docs/architecture/blueprint.md](docs/architecture/blueprint.md).
-Planned work includes scheduling, replay, component replacement, distribution,
-semantic indexing, a graphical desktop, compatibility layers, and hardware
+Planned work includes distribution, semantic indexing, a graphical desktop,
+compatibility layers, and broader hardware
 support. Those features are goals, not current security or compatibility
 claims.
+
+The Phase 4 implementation and its current bounds are described in
+[the runtime design record](docs/design/2026-09-07-phase4-runtime.md).
+Generic VirtIO transport remains in the kernel; driver restart is not hardware
+isolation or a guarantee of recovery from arbitrary in-flight DMA failures.
 
 C is used for low-level kernel code. Zig provides checked boundary modules,
 the component SDK, and WASM applications. Small x86_64 assembly files handle
@@ -66,6 +75,8 @@ make fuzz-heap
 make model-check
 make model-check-negative
 make zero-install-test
+make phase4-demo
+make phase4-negative
 ```
 
 ## Repository Guide

@@ -31,10 +31,15 @@ static void build_source(uint32_t mailbox_used) {
     source.logical_time = 4242;
     source.timer_deadline = 4243;
     source.timer_armed = 1;
-    source.mailbox_used = mailbox_used;
+    source.mailbox_used = mailbox_used == 0 ? 0 : mailbox_used + 8;
 
     for (index = 0; index < mailbox_used; index++) {
-        source.mailbox[index] = (uint8_t)(0xC0 + index);
+        source.mailbox[8 + index] = (uint8_t)(0xC0 + index);
+    }
+    if (mailbox_used != 0) {
+        uint32_t absent = UINT32_MAX;
+        memcpy(source.mailbox, &mailbox_used, 4);
+        memcpy(source.mailbox + 4, &absent, 4);
     }
 
     fill_memory(source_memory, MEMORY_BYTES, 0x11);
@@ -155,7 +160,7 @@ static void test_validate_rejects_corruption(void) {
     CHECK(instance_state_header_validate(buffer, written, &memory_offset,
                                          &memory_size) == 1);
     CHECK(memory_size == MEMORY_BYTES);
-    CHECK(memory_offset == INSTANCE_STATE_HEADER_SIZE + 4u);
+    CHECK(memory_offset == INSTANCE_STATE_HEADER_SIZE + 12u);
 
     saved = buffer[0];
     buffer[0] = (uint8_t)(saved ^ 0xFF);
@@ -200,7 +205,7 @@ static void test_validate_rejects_bad_header_fields(void) {
     header.mailbox_used = COMPONENT_MAILBOX_BYTES + 1;
     memcpy(buffer, &header, INSTANCE_STATE_HEADER_SIZE);
     CHECK(instance_state_header_validate(buffer, written, NULL, NULL) == 0);
-    header.mailbox_used = 4;
+    header.mailbox_used = 12;
 
     memcpy(buffer, &header, INSTANCE_STATE_HEADER_SIZE);
     CHECK(instance_state_header_validate(buffer, written, NULL, NULL) == 1);

@@ -35,6 +35,7 @@ _Static_assert(
 );
 
 size_t instance_state_size(size_t memory_size, uint32_t mailbox_used);
+int instance_state_bytes_validate(const uint8_t *bytes, size_t length);
 
 int instance_state_header_validate(
     const uint8_t *bytes,
