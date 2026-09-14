@@ -7,6 +7,32 @@ NODE_IDENTITY_HOST_OBJ := $(BUILD_DIR)/net/host/node_identity_decode.o
 NODE_IDENTITY_TEST := $(HOSTED_DIR)/test_node_identity.c
 KERNEL_OBJECTS += $(NODE_IDENTITY_OBJ) $(NODE_IDENTITY_DECODE_OBJ)
 
+FRAME_DECODE_ZIG := kernel/net/frame_decode.zig
+FRAME_DECODE_H := kernel/net/frame_decode.h
+FRAME_DECODE_OBJ := $(BUILD_DIR)/net/frame_decode.o
+FRAME_DECODE_HOST_OBJ := $(BUILD_DIR)/net/host/frame_decode.o
+FRAME_DECODE_TEST := $(HOSTED_DIR)/test_frame_decode.c
+FRAME_DECODE_MODULES := kernel/net/ethernet.zig kernel/net/ipv4.zig kernel/net/udp.zig
+KERNEL_OBJECTS += $(FRAME_DECODE_OBJ)
+
+$(FRAME_DECODE_OBJ): $(FRAME_DECODE_ZIG) $(FRAME_DECODE_MODULES) kernel/net/net.mk Makefile
+	mkdir -p $(@D) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(ZIG) build-obj $(ZIG_KERNEL_TARGET) -O ReleaseSafe -mcmodel=kernel -mno-red-zone --dep ethernet --dep ipv4 --dep udp -Mroot=$(FRAME_DECODE_ZIG) -Methernet=kernel/net/ethernet.zig -Mipv4=kernel/net/ipv4.zig -Mudp=kernel/net/udp.zig -femit-bin=$@
+
+$(FRAME_DECODE_HOST_OBJ): $(FRAME_DECODE_ZIG) $(FRAME_DECODE_MODULES) kernel/net/net.mk Makefile
+	mkdir -p $(@D) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(ZIG) build-obj -O ReleaseSafe --dep ethernet --dep ipv4 --dep udp -Mroot=$(FRAME_DECODE_ZIG) -Methernet=kernel/net/ethernet.zig -Mipv4=kernel/net/ipv4.zig -Mudp=kernel/net/udp.zig -femit-bin=$@
+
+$(BUILD_DIR)/test_frame_decode: $(FRAME_DECODE_TEST) $(FRAME_DECODE_H) $(FRAME_DECODE_HOST_OBJ) $(HOSTED_DIR)/check.h kernel/net/net.mk Makefile
+	mkdir -p $(@D)
+	$(HOST_CC) $(HOST_CFLAGS) $(FRAME_DECODE_TEST) $(FRAME_DECODE_HOST_OBJ) -o $@
+
+.PHONY: test-frame-decode
+test-frame-decode: $(BUILD_DIR)/test_frame_decode
+	$(BUILD_DIR)/test_frame_decode
+
+test: test-frame-decode
+
 $(NODE_IDENTITY_OBJ): $(NODE_IDENTITY_C) $(NODE_IDENTITY_H) kernel/net/net.mk Makefile
 	mkdir -p $(@D) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
 	$(ZIG_ENV) $(CC) $(CFLAGS) -c $< -o $@
