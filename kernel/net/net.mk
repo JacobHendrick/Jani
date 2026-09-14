@@ -34,6 +34,34 @@ test-node-identity: $(BUILD_DIR)/test_node_identity_zig $(BUILD_DIR)/test_node_i
 
 test: test-node-identity
 
+NET_PARSER_TEST := $(BUILD_DIR)/test_net_parsers
+NET_PARSER_SOURCES := tools/hosted/test_net_parsers.zig kernel/net/ethernet.zig kernel/net/ipv4.zig kernel/net/udp.zig
+
+$(NET_PARSER_TEST): $(NET_PARSER_SOURCES) kernel/net/net.mk Makefile
+	mkdir -p $(@D) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(ZIG) test -O ReleaseSafe --test-no-exec --dep ethernet --dep ipv4 --dep udp -Mroot=tools/hosted/test_net_parsers.zig -Methernet=kernel/net/ethernet.zig -Mipv4=kernel/net/ipv4.zig -Mudp=kernel/net/udp.zig -femit-bin=$@
+
+.PHONY: test-net-parsers net-parser-negative
+test-net-parsers: $(NET_PARSER_TEST)
+	$(NET_PARSER_TEST)
+
+test: test-net-parsers
+
+$(BUILD_DIR)/net/negative/ipv4.zig: kernel/net/ipv4.zig kernel/net/net.mk
+	mkdir -p $(@D)
+	sed 's/flags_and_offset \& 0x3fff/flags_and_offset \& 0x1fff/' $< > $@
+
+$(BUILD_DIR)/test_net_parsers_negative: tools/hosted/test_net_parsers.zig kernel/net/ethernet.zig $(BUILD_DIR)/net/negative/ipv4.zig kernel/net/udp.zig kernel/net/net.mk Makefile
+	mkdir -p $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(ZIG) test -O ReleaseSafe --test-no-exec --dep ethernet --dep ipv4 --dep udp -Mroot=tools/hosted/test_net_parsers.zig -Methernet=kernel/net/ethernet.zig -Mipv4=$(BUILD_DIR)/net/negative/ipv4.zig -Mudp=kernel/net/udp.zig -femit-bin=$@
+
+net-parser-negative: $(BUILD_DIR)/test_net_parsers_negative
+	@if $(BUILD_DIR)/test_net_parsers_negative >$(BUILD_DIR)/net-parser-negative.log 2>&1; then \
+	    echo "FAIL: accepted seeded fragment-mask defect"; exit 1; \
+	fi
+	@grep -F 'ipv4 rejects first fragment' $(BUILD_DIR)/net-parser-negative.log
+	@echo "PASS: rejected seeded fragment-mask defect"
+
 $(BUILD_DIR)/net/negative/node_identity_decode.zig: $(NODE_IDENTITY_ZIG) kernel/net/net.mk
 	mkdir -p $(@D)
 	sed 's/if (length != public_key_size)/if (length < public_key_size)/' $< > $@
