@@ -2,6 +2,7 @@ const std = @import("std");
 const ethernet = @import("ethernet");
 const ipv4 = @import("ipv4");
 const udp = @import("udp");
+const frame_decode = @import("frame_decode");
 
 const frame_header = [_]u8{
     0x52, 0x54, 0x00, 0x12, 0x34, 0x56,
@@ -101,4 +102,33 @@ test "udp validates length, ports, and pseudo-header checksum" {
     datagram[6] = 0;
     datagram[7] = 0;
     try std.testing.expect(!udp.checksum_valid(&datagram, packet.source, packet.destination));
+}
+
+test "frame decoder exposes only a validated UDP payload" {
+    var frame = frame_header ++ ip_packet ++ ([_]u8{0} ** 15);
+    const datagram = try frame_decode.decode_udp_frame(&frame);
+    try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4 }, &datagram.source);
+    try std.testing.expectEqualSlices(u8, &.{ 5, 6, 7, 8 }, &datagram.destination);
+    try std.testing.expectEqual(@as(u16, 1234), datagram.source_port);
+    try std.testing.expectEqual(@as(u16, 5678), datagram.destination_port);
+    try std.testing.expectEqualSlices(u8, "abc", datagram.payload);
+
+    try std.testing.expectError(error.TruncatedHeader, frame_decode.decode_udp_frame(frame[0..13]));
+    frame[12] = 0x86;
+    frame[13] = 0xdd;
+    try std.testing.expectError(error.UnsupportedEtherType, frame_decode.decode_udp_frame(&frame));
+    frame[12] = 0x08;
+    frame[13] = 0;
+
+    frame[14 + 9] = 6;
+    frame[14 + 11] = 0xc6;
+    try std.testing.expectError(error.UnsupportedProtocol, frame_decode.decode_udp_frame(&frame));
+    frame[14 + 9] = 17;
+    frame[14 + 11] = 0xbb;
+
+    frame[14 + 20 + 5] = 10;
+    try std.testing.expectError(error.InvalidLength, frame_decode.decode_udp_frame(&frame));
+    frame[14 + 20 + 5] = 11;
+    frame[14 + 30] ^= 1;
+    try std.testing.expectError(error.BadUdpChecksum, frame_decode.decode_udp_frame(&frame));
 }
