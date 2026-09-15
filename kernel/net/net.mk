@@ -33,6 +33,26 @@ test-frame-decode: $(BUILD_DIR)/test_frame_decode
 
 test: test-frame-decode
 
+VIRTIO_NET_SOURCE := kernel/drivers/virtio_net.c
+VIRTIO_NET_HEADER := kernel/drivers/virtio_net.h
+VIRTIO_NET_OBJ := $(BUILD_DIR)/virtio_net.o
+VIRTIO_NET_TEST := $(HOSTED_DIR)/test_virtio_net.c
+KERNEL_OBJECTS += $(VIRTIO_NET_OBJ)
+
+$(VIRTIO_NET_OBJ): $(VIRTIO_NET_SOURCE) $(VIRTIO_NET_HEADER) kernel/drivers/pci.h kernel/drivers/virtio_pci.h kernel/drivers/virtqueue.h kernel/net/net.mk Makefile
+	mkdir -p $(@D) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(CC) $(CFLAGS) -c $(VIRTIO_NET_SOURCE) -o $@
+
+$(BUILD_DIR)/test_virtio_net: $(VIRTIO_NET_TEST) $(VIRTIO_NET_SOURCE) $(VIRTIO_NET_HEADER) kernel/drivers/pci.h kernel/drivers/virtio_pci.h kernel/drivers/virtqueue.h $(HOSTED_DIR)/check.h kernel/net/net.mk Makefile
+	mkdir -p $(@D)
+	$(HOST_CC) $(HOST_CFLAGS) $(VIRTIO_NET_SOURCE) $(VIRTIO_NET_TEST) -o $@
+
+.PHONY: test-virtio-net
+test-virtio-net: $(BUILD_DIR)/test_virtio_net
+	$(BUILD_DIR)/test_virtio_net
+
+test: test-virtio-net
+
 $(NODE_IDENTITY_OBJ): $(NODE_IDENTITY_C) $(NODE_IDENTITY_H) kernel/net/net.mk Makefile
 	mkdir -p $(@D) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
 	$(ZIG_ENV) $(CC) $(CFLAGS) -c $< -o $@
