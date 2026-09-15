@@ -26,7 +26,7 @@ int virtio_net_init(void) {
     net_ready = 0;
 
     if (!attach_any_virtio_net()) {
-        kputs("ERROR: no virtio-net device found on the PCI bus\n");
+        kputs("virtio-net: no device found\n");
         return 0;
     }
 

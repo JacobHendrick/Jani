@@ -45,6 +45,12 @@ struct virtqueue_buffer {
     int device_writable;
 };
 
+enum virtqueue_poll_result {
+    VIRTQUEUE_POLL_FAILED = -1,
+    VIRTQUEUE_POLL_EMPTY = 0,
+    VIRTQUEUE_POLL_COMPLETE = 1,
+};
+
 struct virtqueue {
     struct virtio_device *device;
     volatile struct virtq_desc *desc;
@@ -54,12 +60,26 @@ struct virtqueue {
     uint16_t size;
     uint16_t notify_offset;
     uint16_t last_used;
+    uint32_t writable_capacity;
+    int in_flight;
+    int failed;
 };
 
 int virtqueue_setup(
     struct virtqueue *queue,
     struct virtio_device *device,
     uint16_t index
+);
+
+int virtqueue_submit_async(
+    struct virtqueue *queue,
+    const struct virtqueue_buffer *buffers,
+    uint16_t count
+);
+
+enum virtqueue_poll_result virtqueue_poll_used(
+    struct virtqueue *queue,
+    uint32_t *length_out
 );
 
 int virtqueue_submit(
