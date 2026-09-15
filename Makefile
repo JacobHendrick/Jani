@@ -3,7 +3,8 @@ CC := $(ZIG) cc
 LD := ld
 QEMU := qemu-system-x86_64
 XORRISO := xorriso
-QEMU_FLAGS := -cpu qemu64,-apic
+QEMU_FLAGS := -cpu qemu64,-apic -netdev user,id=net0 \
+	-device virtio-net-pci,netdev=net0,disable-legacy=on
 
 # Hosted twin (blueprint rule R3): kernel allocator code compiled as normal
 # Linux binaries under sanitizers. clang, not zig cc: zig does not ship the

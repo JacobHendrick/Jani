@@ -7,6 +7,7 @@
 #include "../drivers/pit.h"
 #include "../drivers/serial.h"
 #include "../drivers/virtio_blk.h"
+#include "../drivers/virtio_net.h"
 #include "../lib/printk.h"
 #include "../lib/string.h"
 #include "../mm/heap.h"
@@ -783,6 +784,10 @@ void kmain(void) {
             kputs("heap bare-metal allocator test ok\n");
         } else {
             kputs("ERROR: heap self-test failed\n");
+        }
+
+        if (!virtio_net_init()) {
+            kputs("ERROR: virtio-net initialization failed\n");
         }
 
         if (run_store_demo()) {
