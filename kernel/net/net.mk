@@ -53,6 +53,18 @@ test-virtio-net: $(BUILD_DIR)/test_virtio_net
 
 test: test-virtio-net
 
+VIRTQUEUE_TEST := $(HOSTED_DIR)/test_virtqueue.c
+
+$(BUILD_DIR)/test_virtqueue: $(VIRTQUEUE_TEST) kernel/drivers/virtqueue.c kernel/drivers/virtqueue.h kernel/drivers/virtio_pci.h $(HOSTED_DIR)/check.h kernel/net/net.mk Makefile
+	mkdir -p $(@D)
+	$(HOST_CC) $(HOST_CFLAGS) kernel/drivers/virtqueue.c $(VIRTQUEUE_TEST) -o $@
+
+.PHONY: test-virtqueue
+test-virtqueue: $(BUILD_DIR)/test_virtqueue
+	$(BUILD_DIR)/test_virtqueue
+
+test: test-virtqueue
+
 $(NODE_IDENTITY_OBJ): $(NODE_IDENTITY_C) $(NODE_IDENTITY_H) kernel/net/net.mk Makefile
 	mkdir -p $(@D) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
 	$(ZIG_ENV) $(CC) $(CFLAGS) -c $< -o $@

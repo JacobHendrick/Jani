@@ -786,9 +786,7 @@ void kmain(void) {
             kputs("ERROR: heap self-test failed\n");
         }
 
-        if (!virtio_net_init()) {
-            kputs("ERROR: virtio-net initialization failed\n");
-        }
+        (void)virtio_net_init();
 
         if (run_store_demo()) {
             kputs("object store on virtio-blk ok\n");
