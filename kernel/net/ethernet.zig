@@ -13,6 +13,11 @@ pub const DecodeError = error{
     UnsupportedFrameFormat,
 };
 
+pub const EncodeError = error{
+    BufferTooSmall,
+    UnsupportedFrameFormat,
+};
+
 pub fn decode_header(frame: []const u8) DecodeError!Header {
     if (frame.len < header_size) {
         return error.TruncatedHeader;
@@ -29,4 +34,27 @@ pub fn decode_header(frame: []const u8) DecodeError!Header {
         .source = frame[6..12].*,
         .ethertype = ether_type,
     };
+}
+
+pub fn encode_header(
+    frame: []u8,
+    header: Header,
+) EncodeError!void {
+    if (frame.len < header_size) {
+        return error.BufferTooSmall;
+    }
+
+    if (header.ethertype < 0x0600) {
+        return error.UnsupportedFrameFormat;
+    }
+
+    frame[0..6].* = header.destination;
+    frame[6..12].* = header.source;
+
+    std.mem.writeInt(
+        u16,
+        frame[12..14],
+        header.ethertype,
+        .big,
+    );
 }

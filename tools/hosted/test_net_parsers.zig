@@ -29,6 +29,107 @@ test "ethernet validates its fixed header" {
     try std.testing.expectError(error.UnsupportedFrameFormat, ethernet.decode_header(&short_type));
 }
 
+test "ethernet writes its fixed header atomically" {
+    const header = ethernet.Header{
+        .destination = .{ 0x52, 0x54, 0x00, 0x12, 0x34, 0x56 },
+        .source = .{ 0x52, 0x54, 0x00, 0xab, 0xcd, 0xef },
+        .ethertype = 0x0800,
+    };
+    const expected = [_]u8{
+        0x52, 0x54, 0x00, 0x12, 0x34, 0x56,
+        0x52, 0x54, 0x00, 0xab, 0xcd, 0xef,
+        0x08, 0x00,
+    };
+    var output = [_]u8{0xa5} ** (ethernet.header_size + 2);
+
+    try ethernet.encode_header(&output, header);
+    try std.testing.expectEqualSlices(
+        u8,
+        &expected,
+        output[0..ethernet.header_size],
+    );
+    try std.testing.expectEqual(@as(u8, 0xa5), output[ethernet.header_size]);
+
+    var rejected = [_]u8{0x5a} ** ethernet.header_size;
+    const before = rejected;
+    try std.testing.expectError(
+        error.BufferTooSmall,
+        ethernet.encode_header(rejected[0 .. ethernet.header_size - 1], header),
+    );
+    try std.testing.expectEqualSlices(u8, &before, &rejected);
+
+    var unsupported = header;
+    unsupported.ethertype = 0x05ff;
+    try std.testing.expectError(
+        error.UnsupportedFrameFormat,
+        ethernet.encode_header(&rejected, unsupported),
+    );
+    try std.testing.expectEqualSlices(u8, &before, &rejected);
+}
+
+test "ipv4 writes a checksummed fixed header atomically" {
+    const header = ipv4.Header{
+        .source = .{ 1, 2, 3, 4 },
+        .destination = .{ 5, 6, 7, 8 },
+        .protocol = 17,
+        .payload_length = 11,
+        .identification = 0x1234,
+        .ttl = 64,
+    };
+    var output = [_]u8{0xa5} ** (ipv4.header_size + 11);
+
+    try ipv4.encode_header(&output, header);
+    try std.testing.expectEqual(@as(u8, 0x45), output[0]);
+    try std.testing.expectEqual(@as(u8, 0), output[1]);
+    try std.testing.expectEqual(
+        @as(u16, output.len),
+        std.mem.readInt(u16, output[2..4], .big),
+    );
+    try std.testing.expectEqual(
+        @as(u16, 0x1234),
+        std.mem.readInt(u16, output[4..6], .big),
+    );
+    try std.testing.expectEqual(
+        @as(u16, 0x4000),
+        std.mem.readInt(u16, output[6..8], .big),
+    );
+    try std.testing.expectEqual(@as(u8, 64), output[8]);
+    try std.testing.expectEqual(@as(u8, 17), output[9]);
+    try std.testing.expect(ipv4.header_checksum_valid(output[0..20]));
+    try std.testing.expectEqualSlices(u8, &header.source, output[12..16]);
+    try std.testing.expectEqualSlices(u8, &header.destination, output[16..20]);
+    try std.testing.expectEqual(@as(u8, 0xa5), output[20]);
+
+    const packet = try ipv4.decode_packet(&output);
+    try std.testing.expectEqualSlices(u8, &header.source, &packet.source);
+    try std.testing.expectEqualSlices(u8, &header.destination, &packet.destination);
+    try std.testing.expectEqualSlices(u8, output[20..], packet.payload);
+
+    var rejected = [_]u8{0x5a} ** ipv4.header_size;
+    const before = rejected;
+    try std.testing.expectError(
+        error.BufferTooSmall,
+        ipv4.encode_header(rejected[0 .. ipv4.header_size - 1], header),
+    );
+    try std.testing.expectEqualSlices(u8, &before, &rejected);
+
+    var invalid = header;
+    invalid.payload_length = ipv4.maximum_payload_size + 1;
+    try std.testing.expectError(
+        error.PayloadTooLarge,
+        ipv4.encode_header(&rejected, invalid),
+    );
+    try std.testing.expectEqualSlices(u8, &before, &rejected);
+
+    invalid = header;
+    invalid.ttl = 0;
+    try std.testing.expectError(
+        error.InvalidTimeToLive,
+        ipv4.encode_header(&rejected, invalid),
+    );
+    try std.testing.expectEqualSlices(u8, &before, &rejected);
+}
+
 test "ipv4 trims padding and validates the header" {
     var padded = ip_packet ++ ([_]u8{0} ** 15);
     const packet = try ipv4.decode_packet(&padded);
