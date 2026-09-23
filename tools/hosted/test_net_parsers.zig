@@ -176,6 +176,90 @@ test "ipv4 rejects first fragment" {
     try std.testing.expectError(error.FragmentedPacket, ipv4.decode_packet(&packet));
 }
 
+test "udp writes a checksummed datagram atomically" {
+    const header = udp.EncodeHeader{
+        .source = .{ 1, 2, 3, 4 },
+        .destination = .{ 5, 6, 7, 8 },
+        .source_port = 1234,
+        .destination_port = 5678,
+    };
+    const expected = [_]u8{
+        0x04, 0xd2, 0x16, 0x2e,
+        0x00, 0x0b, 0x10, 0x62,
+        0x61, 0x62, 0x63,
+    };
+    var datagram = [_]u8{0} ** (udp.header_size + 3);
+    @memcpy(datagram[udp.header_size..], "abc");
+
+    try udp.encode_header(&datagram, header);
+    try std.testing.expectEqualSlices(u8, &expected, &datagram);
+    try std.testing.expect(udp.checksum_valid(
+        &datagram,
+        header.source,
+        header.destination,
+    ));
+
+    const decoded = try udp.decode_header(&datagram);
+    try std.testing.expectEqual(header.source_port, decoded.source_port);
+    try std.testing.expectEqual(header.destination_port, decoded.destination_port);
+    try std.testing.expectEqual(datagram.len, decoded.length);
+
+    var empty = [_]u8{0} ** udp.header_size;
+    try udp.encode_header(&empty, header);
+    try std.testing.expect(udp.checksum_valid(
+        &empty,
+        header.source,
+        header.destination,
+    ));
+
+    var zero_checksum = [_]u8{0} ** (udp.header_size + 2);
+    zero_checksum[udp.header_size] = 0xd4;
+    zero_checksum[udp.header_size + 1] = 0xc6;
+    try udp.encode_header(&zero_checksum, header);
+    try std.testing.expectEqual(
+        @as(u16, 0xffff),
+        std.mem.readInt(u16, zero_checksum[6..8], .big),
+    );
+    try std.testing.expect(udp.checksum_valid(
+        &zero_checksum,
+        header.source,
+        header.destination,
+    ));
+
+    var short = [_]u8{0x5a} ** (udp.header_size - 1);
+    const short_before = short;
+    try std.testing.expectError(
+        error.BufferTooSmall,
+        udp.encode_header(&short, header),
+    );
+    try std.testing.expectEqualSlices(u8, &short_before, &short);
+
+    var maximum = [_]u8{0} ** udp.maximum_datagram_size;
+    try udp.encode_header(&maximum, header);
+    try std.testing.expect(udp.checksum_valid(
+        &maximum,
+        header.source,
+        header.destination,
+    ));
+
+    var oversized = [_]u8{0x5a} ** (udp.maximum_datagram_size + 1);
+    const oversized_header_before = oversized[0..udp.header_size].*;
+    const oversized_last_before = oversized[oversized.len - 1];
+    try std.testing.expectError(
+        error.DatagramTooLarge,
+        udp.encode_header(&oversized, header),
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        &oversized_header_before,
+        oversized[0..udp.header_size],
+    );
+    try std.testing.expectEqual(
+        oversized_last_before,
+        oversized[oversized.len - 1],
+    );
+}
+
 test "udp validates length, ports, and pseudo-header checksum" {
     const packet = try ipv4.decode_packet(&ip_packet);
     const header = try udp.decode_header(packet.payload);
