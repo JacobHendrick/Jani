@@ -15,6 +15,14 @@ FRAME_DECODE_TEST := $(HOSTED_DIR)/test_frame_decode.c
 FRAME_DECODE_MODULES := kernel/net/ethernet.zig kernel/net/ipv4.zig kernel/net/udp.zig
 KERNEL_OBJECTS += $(FRAME_DECODE_OBJ)
 
+FRAME_ENCODE_ZIG := kernel/net/frame_encode.zig
+FRAME_ENCODE_OBJ := $(BUILD_DIR)/net/frame_encode.o
+KERNEL_OBJECTS += $(FRAME_ENCODE_OBJ)
+
+$(FRAME_ENCODE_OBJ): $(FRAME_ENCODE_ZIG) $(FRAME_DECODE_MODULES) kernel/net/net.mk Makefile
+	mkdir -p $(@D) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(ZIG) build-obj $(ZIG_KERNEL_TARGET) -O ReleaseSafe -mcmodel=kernel -mno-red-zone --dep ethernet --dep ipv4 --dep udp -Mroot=$(FRAME_ENCODE_ZIG) -Methernet=kernel/net/ethernet.zig -Mipv4=kernel/net/ipv4.zig -Mudp=kernel/net/udp.zig -femit-bin=$@
+
 $(FRAME_DECODE_OBJ): $(FRAME_DECODE_ZIG) $(FRAME_DECODE_MODULES) kernel/net/net.mk Makefile
 	mkdir -p $(@D) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
 	$(ZIG_ENV) $(ZIG) build-obj $(ZIG_KERNEL_TARGET) -O ReleaseSafe -mcmodel=kernel -mno-red-zone --dep ethernet --dep ipv4 --dep udp -Mroot=$(FRAME_DECODE_ZIG) -Methernet=kernel/net/ethernet.zig -Mipv4=kernel/net/ipv4.zig -Mudp=kernel/net/udp.zig -femit-bin=$@
@@ -93,11 +101,11 @@ test-node-identity: $(BUILD_DIR)/test_node_identity_zig $(BUILD_DIR)/test_node_i
 test: test-node-identity
 
 NET_PARSER_TEST := $(BUILD_DIR)/test_net_parsers
-NET_PARSER_SOURCES := tools/hosted/test_net_parsers.zig kernel/net/ethernet.zig kernel/net/ipv4.zig kernel/net/udp.zig kernel/net/frame_decode.zig
+NET_PARSER_SOURCES := tools/hosted/test_net_parsers.zig kernel/net/ethernet.zig kernel/net/ipv4.zig kernel/net/udp.zig kernel/net/frame_decode.zig $(FRAME_ENCODE_ZIG)
 
 $(NET_PARSER_TEST): $(NET_PARSER_SOURCES) kernel/net/net.mk Makefile
 	mkdir -p $(@D) $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
-	$(ZIG_ENV) $(ZIG) test -O ReleaseSafe --test-no-exec --dep ethernet --dep ipv4 --dep udp --dep frame_decode -Mroot=tools/hosted/test_net_parsers.zig -Methernet=kernel/net/ethernet.zig -Mipv4=kernel/net/ipv4.zig -Mudp=kernel/net/udp.zig --dep ethernet --dep ipv4 --dep udp -Mframe_decode=kernel/net/frame_decode.zig -femit-bin=$@
+	$(ZIG_ENV) $(ZIG) test -O ReleaseSafe --test-no-exec --dep ethernet --dep ipv4 --dep udp --dep frame_decode --dep frame_encode -Mroot=tools/hosted/test_net_parsers.zig -Methernet=kernel/net/ethernet.zig -Mipv4=kernel/net/ipv4.zig -Mudp=kernel/net/udp.zig --dep ethernet --dep ipv4 --dep udp -Mframe_decode=kernel/net/frame_decode.zig --dep ethernet --dep ipv4 --dep udp -Mframe_encode=$(FRAME_ENCODE_ZIG) -femit-bin=$@
 
 .PHONY: test-net-parsers net-parser-negative
 test-net-parsers: $(NET_PARSER_TEST)
@@ -109,9 +117,9 @@ $(BUILD_DIR)/net/negative/ipv4.zig: kernel/net/ipv4.zig kernel/net/net.mk
 	mkdir -p $(@D)
 	sed 's/flags_and_offset \& 0x3fff/flags_and_offset \& 0x1fff/' $< > $@
 
-$(BUILD_DIR)/test_net_parsers_negative: tools/hosted/test_net_parsers.zig kernel/net/ethernet.zig $(BUILD_DIR)/net/negative/ipv4.zig kernel/net/udp.zig kernel/net/frame_decode.zig kernel/net/net.mk Makefile
+$(BUILD_DIR)/test_net_parsers_negative: $(NET_PARSER_SOURCES) $(BUILD_DIR)/net/negative/ipv4.zig kernel/net/net.mk Makefile
 	mkdir -p $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
-	$(ZIG_ENV) $(ZIG) test -O ReleaseSafe --test-no-exec --dep ethernet --dep ipv4 --dep udp --dep frame_decode -Mroot=tools/hosted/test_net_parsers.zig -Methernet=kernel/net/ethernet.zig -Mipv4=$(BUILD_DIR)/net/negative/ipv4.zig -Mudp=kernel/net/udp.zig --dep ethernet --dep ipv4 --dep udp -Mframe_decode=kernel/net/frame_decode.zig -femit-bin=$@
+	$(ZIG_ENV) $(ZIG) test -O ReleaseSafe --test-no-exec --dep ethernet --dep ipv4 --dep udp --dep frame_decode --dep frame_encode -Mroot=tools/hosted/test_net_parsers.zig -Methernet=kernel/net/ethernet.zig -Mipv4=$(BUILD_DIR)/net/negative/ipv4.zig -Mudp=kernel/net/udp.zig --dep ethernet --dep ipv4 --dep udp -Mframe_decode=kernel/net/frame_decode.zig --dep ethernet --dep ipv4 --dep udp -Mframe_encode=$(FRAME_ENCODE_ZIG) -femit-bin=$@
 
 net-parser-negative: $(BUILD_DIR)/test_net_parsers_negative
 	@if $(BUILD_DIR)/test_net_parsers_negative >$(BUILD_DIR)/net-parser-negative.log 2>&1; then \
@@ -119,6 +127,22 @@ net-parser-negative: $(BUILD_DIR)/test_net_parsers_negative
 	fi
 	@grep -F 'ipv4 rejects first fragment' $(BUILD_DIR)/net-parser-negative.log
 	@echo "PASS: rejected seeded fragment-mask defect"
+
+$(BUILD_DIR)/net/negative/frame_encode.zig: $(FRAME_ENCODE_ZIG) kernel/net/net.mk
+	mkdir -p $(@D)
+	sed 's/if (overlaps(output, frame_length, payload))/if (false)/' $< > $@
+
+$(BUILD_DIR)/test_frame_encode_negative: $(NET_PARSER_SOURCES) $(BUILD_DIR)/net/negative/frame_encode.zig kernel/net/net.mk Makefile
+	mkdir -p $(ZIG_GLOBAL_CACHE_DIR) $(ZIG_LOCAL_CACHE_DIR)
+	$(ZIG_ENV) $(ZIG) test -O ReleaseSafe --test-no-exec --dep ethernet --dep ipv4 --dep udp --dep frame_decode --dep frame_encode -Mroot=tools/hosted/test_net_parsers.zig -Methernet=kernel/net/ethernet.zig -Mipv4=kernel/net/ipv4.zig -Mudp=kernel/net/udp.zig --dep ethernet --dep ipv4 --dep udp -Mframe_decode=kernel/net/frame_decode.zig --dep ethernet --dep ipv4 --dep udp -Mframe_encode=$(BUILD_DIR)/net/negative/frame_encode.zig -femit-bin=$@
+
+.PHONY: frame-encode-negative
+frame-encode-negative: $(BUILD_DIR)/test_frame_encode_negative
+	@if $(BUILD_DIR)/test_frame_encode_negative >$(BUILD_DIR)/frame-encode-negative.log 2>&1; then \
+	    echo "FAIL: accepted seeded overlap defect"; exit 1; \
+	fi
+	@grep -F 'frame encoder rejects invalid inputs without writing' $(BUILD_DIR)/frame-encode-negative.log
+	@echo "PASS: rejected seeded overlap defect"
 
 $(BUILD_DIR)/net/negative/node_identity_decode.zig: $(NODE_IDENTITY_ZIG) kernel/net/net.mk
 	mkdir -p $(@D)

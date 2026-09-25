@@ -3,6 +3,7 @@ const ethernet = @import("ethernet");
 const ipv4 = @import("ipv4");
 const udp = @import("udp");
 const frame_decode = @import("frame_decode");
+const frame_encode = @import("frame_encode");
 
 const frame_header = [_]u8{
     0x52, 0x54, 0x00, 0x12, 0x34, 0x56,
@@ -15,6 +16,89 @@ const ip_packet = [_]u8{
     0x05, 0x06, 0x07, 0x08, 0x04, 0xd2, 0x16, 0x2e,
     0x00, 0x0b, 0x10, 0x62, 0x61, 0x62, 0x63,
 };
+
+const encode_fields = frame_encode.Fields{
+    .destination_mac = .{ 0x52, 0x54, 0, 0x12, 0x34, 0x56 },
+    .source_mac = .{ 0x52, 0x54, 0, 0xab, 0xcd, 0xef },
+    .source_ip = .{ 1, 2, 3, 4 },
+    .destination_ip = .{ 5, 6, 7, 8 },
+    .source_port = 1234,
+    .destination_port = 5678,
+    .identification = 0,
+    .ttl = 64,
+};
+
+test "frame encoder composes a checksummed UDP packet" {
+    var output = [_]u8{0xa5} ** (frame_encode.minimum_frame_size + 2);
+    const length = try frame_encode.encode_udp_frame(&output, encode_fields, "abc");
+    try std.testing.expectEqual(frame_encode.minimum_frame_size, length);
+
+    var expected = frame_header ++ ip_packet;
+    expected[ethernet.header_size + 6] = 0x40;
+    expected[ethernet.header_size + 10] = 0x2a;
+    try std.testing.expectEqualSlices(u8, &expected, output[0..expected.len]);
+    const padding = [_]u8{0} ** (frame_encode.minimum_frame_size - expected.len);
+    try std.testing.expectEqualSlices(u8, &padding, output[expected.len..length]);
+    try std.testing.expectEqualSlices(u8, &.{ 0xa5, 0xa5 }, output[length..]);
+
+    const decoded = try frame_decode.decode_udp_frame(output[0..length]);
+    try std.testing.expectEqualSlices(u8, &encode_fields.source_ip, &decoded.source);
+    try std.testing.expectEqualSlices(u8, &encode_fields.destination_ip, &decoded.destination);
+    try std.testing.expectEqual(encode_fields.source_port, decoded.source_port);
+    try std.testing.expectEqual(encode_fields.destination_port, decoded.destination_port);
+    try std.testing.expectEqualSlices(u8, "abc", decoded.payload);
+
+    var empty = [_]u8{0xa5} ** frame_encode.minimum_frame_size;
+    try std.testing.expectEqual(
+        frame_encode.minimum_frame_size,
+        try frame_encode.encode_udp_frame(&empty, encode_fields, ""),
+    );
+    const empty_decoded = try frame_decode.decode_udp_frame(&empty);
+    try std.testing.expectEqual(@as(usize, 0), empty_decoded.payload.len);
+    const empty_padding = [_]u8{0} ** (frame_encode.minimum_frame_size - frame_encode.frame_header_size);
+    try std.testing.expectEqualSlices(u8, &empty_padding, empty[frame_encode.frame_header_size..]);
+
+    const payload = [_]u8{0x5a} ** frame_encode.maximum_payload_size;
+    var maximum = [_]u8{0xa5} ** frame_encode.maximum_frame_size;
+    try std.testing.expectEqual(
+        frame_encode.maximum_frame_size,
+        try frame_encode.encode_udp_frame(&maximum, encode_fields, &payload),
+    );
+    const maximum_decoded = try frame_decode.decode_udp_frame(&maximum);
+    try std.testing.expectEqualSlices(u8, &payload, maximum_decoded.payload);
+}
+
+test "frame encoder rejects invalid inputs without writing" {
+    var output = [_]u8{0x5a} ** frame_encode.minimum_frame_size;
+    const before = output;
+
+    try std.testing.expectError(
+        error.BufferTooSmall,
+        frame_encode.encode_udp_frame(output[0 .. output.len - 1], encode_fields, "abc"),
+    );
+    try std.testing.expectEqualSlices(u8, &before, &output);
+
+    var invalid = encode_fields;
+    invalid.ttl = 0;
+    try std.testing.expectError(
+        error.InvalidTimeToLive,
+        frame_encode.encode_udp_frame(&output, invalid, "abc"),
+    );
+    try std.testing.expectEqualSlices(u8, &before, &output);
+
+    const oversized = [_]u8{0} ** (frame_encode.maximum_payload_size + 1);
+    try std.testing.expectError(
+        error.FrameTooLarge,
+        frame_encode.encode_udp_frame(&output, encode_fields, &oversized),
+    );
+    try std.testing.expectEqualSlices(u8, &before, &output);
+
+    try std.testing.expectError(
+        error.OverlappingBuffers,
+        frame_encode.encode_udp_frame(&output, encode_fields, output[0..3]),
+    );
+    try std.testing.expectEqualSlices(u8, &before, &output);
+}
 
 test "ethernet validates its fixed header" {
     try std.testing.expectError(error.TruncatedHeader, ethernet.decode_header(frame_header[0..13]));
