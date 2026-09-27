@@ -14,6 +14,7 @@
 #include "../sched/scheduler.h"
 #include "../replay/record.h"
 #include "../drivers/block_component.h"
+#include "../drivers/net_component.h"
 
 #define jani_log_impl jani_log_live
 #define jani_object_create_impl jani_object_create_live
@@ -952,6 +953,17 @@ static int32_t jani_queue_submit_impl(wasm_exec_env_t env, int32_t slot, uint32_
 static int32_t jani_driver_restart_impl(wasm_exec_env_t env) {
     (void)env;
     return block_component_restart(current);
+}
+
+static int32_t jani_net_driver_receive_impl(wasm_exec_env_t env, uint32_t pointer, uint32_t length) {
+    if (length != 1514) return JANI_EINVAL;
+    uint8_t *bytes = linear_memory(env, pointer, length);
+    return bytes == NULL ? JANI_ERANGE : net_component_request(current, bytes, length);
+}
+static int32_t jani_net_driver_complete_impl(wasm_exec_env_t env, int32_t status, uint32_t pointer, uint32_t length) {
+    if (length != 0 && length != sizeof(struct net_frame_result)) return JANI_EINVAL;
+    uint8_t *bytes = linear_memory(env, pointer, length);
+    return bytes == NULL ? JANI_ERANGE : net_component_complete(current, status, bytes, length);
 }
 
 #include "generated/syscall_table.h"

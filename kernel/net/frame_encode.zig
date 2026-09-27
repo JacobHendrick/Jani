@@ -86,3 +86,40 @@ pub fn encode_udp_frame(
 
     return frame_length;
 }
+
+const CFields = extern struct {
+    destination_mac: [6]u8,
+    source_mac: [6]u8,
+    source_ip: [4]u8,
+    destination_ip: [4]u8,
+    source_port: u16,
+    destination_port: u16,
+    identification: u16,
+    ttl: u8,
+};
+
+export fn jani_udp_frame_encode(
+    raw: ?[*]u8,
+    capacity: usize,
+    fields_ptr: ?*const CFields,
+    payload_ptr: ?[*]const u8,
+    payload_length: usize,
+) callconv(.c) usize {
+    const output = raw orelse return 0;
+    const fields = (fields_ptr orelse return 0).*;
+    if (payload_length > maximum_payload_size) return 0;
+    const payload: []const u8 = if (payload_length == 0)
+        &.{}
+    else
+        (payload_ptr orelse return 0)[0..payload_length];
+    return encode_udp_frame(output[0..@min(capacity, maximum_frame_size)], .{
+        .destination_mac = fields.destination_mac,
+        .source_mac = fields.source_mac,
+        .source_ip = fields.source_ip,
+        .destination_ip = fields.destination_ip,
+        .source_port = fields.source_port,
+        .destination_port = fields.destination_port,
+        .identification = fields.identification,
+        .ttl = fields.ttl,
+    }, payload) catch return 0;
+}

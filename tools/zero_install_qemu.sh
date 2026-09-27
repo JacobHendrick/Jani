@@ -39,6 +39,13 @@ boot_once() {
         -device virtio-blk-pci,drive=d0 >/dev/null 2>&1 &
     pid=$!
 
+    # Disk stress/recovery runs before the component; do not count boot as observation.
+    remaining=120
+    while [ "$remaining" -gt 0 ]; do
+        if grep -q '^counter: \|ERROR:\|PANIC\|SYSCALL FAIL' "$LOG"; then break; fi
+        if ! kill -0 "$pid" 2>/dev/null; then break; fi
+        sleep 1; remaining=$((remaining - 1))
+    done
     sleep "$RUN_SECONDS"
     kill -9 "$pid" 2>/dev/null
     wait "$pid" 2>/dev/null

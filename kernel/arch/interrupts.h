@@ -27,6 +27,7 @@ struct interrupt_frame {
 };
 
 void interrupt_handler(struct interrupt_frame *frame);
+void interrupt_set_timer_logging(int enabled);
 
 void isr_divide_error(void);
 void isr_invalid_opcode(void);

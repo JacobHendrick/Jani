@@ -24,6 +24,8 @@ extern "env" fn jani_dma_read(slot: i32, offset: u32, buffer_ptr: [*]u8, buffer_
 extern "env" fn jani_dma_write(slot: i32, offset: u32, buffer_ptr: [*]const u8, buffer_len: u32) i32;
 extern "env" fn jani_queue_submit(slot: i32, descriptors_ptr: [*]const u8, descriptors_len: u32) i32;
 extern "env" fn jani_driver_restart() i32;
+extern "env" fn jani_net_driver_receive(buffer_ptr: [*]u8, buffer_len: u32) i32;
+extern "env" fn jani_net_driver_complete(status: i32, buffer_ptr: [*]const u8, buffer_len: u32) i32;
 
 pub fn log(message: []const u8) i32 {
     return jani_log(message.ptr, @intCast(message.len));
@@ -119,5 +121,13 @@ pub fn queue_submit(slot: i32, descriptors: []const u8) i32 {
 
 pub fn driver_restart() i32 {
     return jani_driver_restart();
+}
+
+pub fn net_driver_receive(buffer: []u8) i32 {
+    return jani_net_driver_receive(buffer.ptr, @intCast(buffer.len));
+}
+
+pub fn net_driver_complete(status: i32, buffer: []const u8) i32 {
+    return jani_net_driver_complete(status, buffer.ptr, @intCast(buffer.len));
 }
 

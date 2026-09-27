@@ -24,6 +24,9 @@
 #include "../sched/scheduler.h"
 #include "../wasm/syscalls.h"
 #include "../arch/stack.h"
+#ifdef JANI_PHASE5_DEMO
+#include "../net/demo.h"
+#endif
 
 #define LIMINE_REQUESTS_START_MARKER { 0xf6b8f4b39de7d1ae, 0xfab91a6940fcb9cf, \
                                        0x785c6ed015d3e316, 0x181e920a7852b9d9 }
@@ -582,6 +585,17 @@ static int run_component_demo(void) {
         kputs("ERROR: corrupt component registry\n");
         return 0;
     }
+#ifdef JANI_PHASE5_DEMO
+    if (registered && count == 0) {
+        for (size_t i = 0; i < demo_store.table.count; i++) {
+            if (demo_store.table.entries[i].id.high == COMPONENT_FENCE_ID_HIGH) {
+                kputs("phase5: fenced source stays stopped on restart\n");
+                return capability_domain_open(&demo_domain, &demo_store, &demo_components) &&
+                    scheduler_init(&demo_scheduler, &demo_domain, 1, UINT64_C(2000000000), component_clock);
+            }
+        }
+    }
+#endif
     if (registered && count > 0) {
         printk("store: registry found (%d component)\n", (int)count);
 
@@ -845,6 +859,22 @@ void kmain(void) {
 
     kputs("interrupts enabled\n");
 
+#ifdef JANI_PHASE5_DEMO
+    struct net_boot_config config;
+    if (module_request.response != NULL && module_request.response->module_count <= 16) {
+        for (uint64_t i = 0; i < module_request.response->module_count; i++) {
+            struct limine_file *file = module_request.response->modules[i];
+            if (file != NULL && file->size == NET_CONFIG_BYTES &&
+                net_config_decode(file->address, (size_t)file->size, &config)) {
+                if (!phase5_network_demo(&demo_store, &config, &demo_component, &demo_components, &demo_scheduler))
+                    kputs("PHASE5 FAIL: network demo stopped\n");
+                halt_forever();
+            }
+        }
+    }
+    kputs("PHASE5 FAIL: missing trusted peer configuration\n");
+    halt_forever();
+#endif
     if (demo_component_ready) {
         component_tick_forever();
     }

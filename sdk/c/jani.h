@@ -29,5 +29,7 @@ int32_t jani_dma_read(int32_t slot, uint32_t offset, uint32_t buffer_ptr, uint32
 int32_t jani_dma_write(int32_t slot, uint32_t offset, uint32_t buffer_ptr, uint32_t buffer_len);
 int32_t jani_queue_submit(int32_t slot, uint32_t descriptors_ptr, uint32_t descriptors_len);
 int32_t jani_driver_restart(void);
+int32_t jani_net_driver_receive(uint32_t buffer_ptr, uint32_t buffer_len);
+int32_t jani_net_driver_complete(int32_t status, uint32_t buffer_ptr, uint32_t buffer_len);
 
 #endif

@@ -240,4 +240,37 @@ _Static_assert(
     "service_counter_state changed size; update idl/records.idl"
 );
 
+_Static_assert(
+    offsetof(struct net_frame_result, source) == 0,
+    "net_frame_result.source moved; update idl/records.idl"
+);
+_Static_assert(
+    offsetof(struct net_frame_result, destination) == 4,
+    "net_frame_result.destination moved; update idl/records.idl"
+);
+_Static_assert(
+    offsetof(struct net_frame_result, source_port) == 8,
+    "net_frame_result.source_port moved; update idl/records.idl"
+);
+_Static_assert(
+    offsetof(struct net_frame_result, destination_port) == 12,
+    "net_frame_result.destination_port moved; update idl/records.idl"
+);
+_Static_assert(
+    offsetof(struct net_frame_result, payload_offset) == 16,
+    "net_frame_result.payload_offset moved; update idl/records.idl"
+);
+_Static_assert(
+    offsetof(struct net_frame_result, payload_length) == 20,
+    "net_frame_result.payload_length moved; update idl/records.idl"
+);
+_Static_assert(
+    offsetof(struct net_frame_result, reserved) == 24,
+    "net_frame_result.reserved moved; update idl/records.idl"
+);
+_Static_assert(
+    sizeof(struct net_frame_result) == 28,
+    "net_frame_result changed size; update idl/records.idl"
+);
+
 #endif

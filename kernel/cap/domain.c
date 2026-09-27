@@ -43,7 +43,8 @@ const struct capability *capability_domain_resolve(
     struct component *component;
     if (domain == NULL || !capability_ref_is_valid(&ref)) return NULL;
     component = component_set_find(domain->components, ref.component_id);
-    if (component == NULL || capability_table_generation(&component->capability_table,
+    if (component == NULL || component_is_fenced(domain->store, component->root_id) ||
+        capability_table_generation(&component->capability_table,
         ref.slot) != ref.generation) return NULL;
     return capability_table_get(&component->capability_table, ref.slot);
 }

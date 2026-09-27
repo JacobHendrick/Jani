@@ -84,7 +84,7 @@ static int trace_stage(struct scheduler *s) {
 }
 
 static int runnable(const struct component *c, uint64_t now) {
-    return c != NULL && !c->exited &&
+    return c != NULL && !c->exited && !component_is_fenced(c->store, c->root_id) &&
         (c->mailbox_used != 0 || (c->timer_armed && c->timer_deadline <= now));
 }
 

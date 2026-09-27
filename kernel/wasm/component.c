@@ -6,6 +6,7 @@
 #include "instance_state.h"
 #include "runtime.h"
 #include "service.h"
+#include "../drivers/net_component.h"
 
 #include "generated/records_conform.h"
 
@@ -773,6 +774,13 @@ int component_install(
     return 1;
 }
 
+int component_is_fenced(struct object_store *store, struct object_id root) {
+    if (store == NULL || object_store_requires_recovery(store)) return 1;
+    return root.high == COMPONENT_SEQUENCE_ID_HIGH &&
+        object_table_find(&store->table,
+            (struct object_id){COMPONENT_FENCE_ID_HIGH, root.low}) != NULL;
+}
+
 int component_resume(
     struct object_store *store,
     struct object_id root_id,
@@ -787,7 +795,7 @@ int component_resume(
     size_t saved_memory_size;
     int created;
 
-    if ((store == NULL) || (component_out == NULL)) {
+    if ((store == NULL) || (component_out == NULL) || component_is_fenced(store, root_id)) {
         return 0;
     }
 
@@ -882,7 +890,8 @@ int component_uninstall(
 }
 
 int component_invoke_timer(struct component *component) {
-    if ((component == NULL) || (component->instance == NULL)) {
+    if ((component == NULL) || (component->instance == NULL) || component->exited ||
+        component_is_fenced(component->store, component->root_id)) {
         return 0;
     }
 

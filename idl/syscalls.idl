@@ -22,3 +22,5 @@ syscall dma_read(slot: cap, offset: u32, buffer: out slice<u8>) -> i32;
 syscall dma_write(slot: cap, offset: u32, buffer: slice<u8>) -> i32;
 syscall queue_submit(slot: cap, descriptors: slice<u8>) -> i32;
 syscall driver_restart() -> i32;
+syscall net_driver_receive(buffer: out slice<u8>) -> i32;
+syscall net_driver_complete(status: i32, buffer: slice<u8>) -> i32;

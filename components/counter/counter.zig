@@ -137,6 +137,9 @@ export fn jani_init() void {
     check("time_logical", jani.time_logical() >= 0);
     probe_objects();
     probe_messages();
+    var network_frame: [1514]u8 = undefined;
+    check("net driver receive denied", jani.net_driver_receive(&network_frame) == -2);
+    check("net driver complete denied", jani.net_driver_complete(-1, &.{}) == -2);
 
     _ = jani.timer_set(TICK_DELAY);
 }
@@ -152,4 +155,14 @@ export fn jani_on_timer() void {
     _ = jani.timer_set(TICK_DELAY);
 }
 
-export fn jani_on_message() void {}
+export fn jani_on_message() void {
+    var payload: [256]u8 = undefined;
+    var capability: i32 = -1;
+    for (0..512) |_| {
+        const length = jani.message_recv(&payload, &capability);
+        if (length < 0) break;
+        say("counter mailbox: ");
+        say(payload[0..@intCast(length)]);
+        say("\n");
+    }
+}

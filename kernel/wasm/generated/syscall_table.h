@@ -25,4 +25,6 @@ static NativeSymbol jani_symbols[] = {
     { "jani_dma_write", (void *)jani_dma_write_impl, "(iiii)i", NULL },
     { "jani_queue_submit", (void *)jani_queue_submit_impl, "(iii)i", NULL },
     { "jani_driver_restart", (void *)jani_driver_restart_impl, "()i", NULL },
+    { "jani_net_driver_receive", (void *)jani_net_driver_receive_impl, "(ii)i", NULL },
+    { "jani_net_driver_complete", (void *)jani_net_driver_complete_impl, "(iii)i", NULL },
 };

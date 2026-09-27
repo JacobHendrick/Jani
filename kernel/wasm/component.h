@@ -11,6 +11,7 @@
 #define COMPONENT_REGISTRY_ID_HIGH UINT64_C(1)
 #define COMPONENT_REGISTRY_ID_LOW UINT64_C(0)
 #define COMPONENT_SEQUENCE_ID_HIGH UINT64_C(2)
+#define COMPONENT_FENCE_ID_HIGH UINT64_C(0x4a414e49464e4345)
 
 #define COMPONENT_TYPE_REGISTRY UINT64_C(1)
 #define COMPONENT_TYPE_ROOT UINT64_C(2)
@@ -216,6 +217,8 @@ int component_install(
     size_t module_size,
     struct component *component_out
 );
+
+int component_is_fenced(struct object_store *store, struct object_id root);
 
 int component_resume(
     struct object_store *store,

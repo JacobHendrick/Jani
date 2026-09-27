@@ -43,13 +43,16 @@ static void halt_forever(void) {
     }
 }
 
+static int timer_logging = 1;
+void interrupt_set_timer_logging(int enabled) { timer_logging = enabled != 0; }
+
 static void handle_irq0(void) {
     uint64_t ticks;
 
     pit_on_irq();
     ticks = pit_get_ticks();
 
-    if ((ticks == 1) || ((ticks % TIMER_PRINT_INTERVAL) == 0)) {
+    if (timer_logging && ((ticks == 1) || ((ticks % TIMER_PRINT_INTERVAL) == 0))) {
         printk("tick: %d\n", (int)ticks);
     }
 

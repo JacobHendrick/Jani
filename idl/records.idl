@@ -69,3 +69,13 @@ record service_counter_state size 16 {
     slot: i32 @ 8;
     reserved: u32 @ 12;
 }
+
+record net_frame_result size 28 {
+    source: u32 @ 0;
+    destination: u32 @ 4;
+    source_port: u32 @ 8;
+    destination_port: u32 @ 12;
+    payload_offset: u32 @ 16;
+    payload_length: u32 @ 20;
+    reserved: u32 @ 24;
+}
